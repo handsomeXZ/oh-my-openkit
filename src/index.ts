@@ -9,6 +9,7 @@ import { createRuntimeTmuxConfig, isTmuxIntegrationEnabled } from "./create-runt
 import { createTools } from "./create-tools"
 import { initializeOpenClaw } from "./openclaw"
 import { createPluginInterface } from "./plugin-interface"
+import { createPluginDispose, type PluginDispose } from "./plugin-dispose"
 
 import { loadPluginConfig } from "./plugin-config"
 import { createModelCacheState } from "./plugin-state"
@@ -16,6 +17,7 @@ import { createFirstMessageVariantGate } from "./shared/first-message-variant"
 import { injectServerAuthIntoClient, log, logLegacyPluginStartupWarning } from "./shared"
 import { installAgentSortShim, setAgentSortOrder } from "./shared/agent-sort-shim"
 import { detectExternalSkillPlugin, getSkillPluginConflictWarning } from "./shared/external-plugin-detector"
+import { lspManager } from "./tools"
 import { startBackgroundCheck as startTmuxCheck } from "./tools/interactive-bash"
 
 type CompactionAutocontinueHook = (
@@ -26,6 +28,8 @@ type CompactionAutocontinueHook = (
 type HooksWithCompactionAutocontinue = Hooks & {
   "experimental.compaction.autocontinue"?: CompactionAutocontinueHook
 }
+
+let activePluginDispose: PluginDispose | null = null
 
 const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
   installAgentSortShim()
@@ -41,6 +45,8 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
   }
 
   injectServerAuthIntoClient(input.client)
+
+  await activePluginDispose?.()
 
   const pluginConfig = loadPluginConfig(input.directory, input)
   setAgentSortOrder(pluginConfig.agent_order)
@@ -87,6 +93,8 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
     backgroundNotificationHookEnabled: isHookEnabled("background-notification"),
   })
 
+  managers.serenaServiceManager.start(pluginConfig)
+
   const toolsResult = await createTools({
     ctx: input,
     pluginConfig,
@@ -112,6 +120,14 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
     managers,
     hooks,
     tools: toolsResult.filteredTools,
+  })
+
+  const dispose = createPluginDispose({
+    backgroundManager: managers.backgroundManager,
+    skillMcpManager: managers.skillMcpManager,
+    serenaServiceManager: managers.serenaServiceManager,
+    lspManager,
+    disposeHooks: hooks.disposeHooks,
   })
 
   const pluginHooks: HooksWithCompactionAutocontinue = {
@@ -140,6 +156,8 @@ const serverPlugin: Plugin = async (input, _options): Promise<Hooks> => {
       await hooks.compactionTodoPreserver?.restore(autocontinueInput.sessionID)
     },
   }
+
+  activePluginDispose = dispose
 
   return pluginHooks
 }

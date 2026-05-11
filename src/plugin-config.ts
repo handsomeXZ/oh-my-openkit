@@ -2,6 +2,7 @@ import * as fs from "fs";
 import { homedir } from "node:os";
 import * as path from "path";
 import { OhMyOpenCodeConfigSchema, type OhMyOpenCodeConfig } from "./config";
+import { normalizeLspConfig } from "./config/schema/lsp";
 import {
   log,
   containsPath,
@@ -390,6 +391,7 @@ export function loadPluginConfig(
   config = {
     ...config,
     mcp_env_allowlist: userConfig?.mcp_env_allowlist ?? [],
+    lsp: config.lsp ? normalizeLspConfig(config.lsp) : config.lsp,
   };
 
   log("Final merged config", {

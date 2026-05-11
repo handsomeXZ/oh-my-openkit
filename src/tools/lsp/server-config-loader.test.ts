@@ -158,4 +158,60 @@ describe("loadJsonFile", () => {
       rmSync(tempBase, { recursive: true, force: true })
     }
   })
+
+  it("loads stderr log file from project LSP config", () => {
+    const originalCwd = process.cwd()
+    const tempProject = join(tmpdir(), `omo-test-project-stderr-log-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    try {
+      mkdirSync(join(tempProject, ".opencode"), { recursive: true })
+      const projectJsonc = `{
+  "lsp": {
+    "clangd": {
+      "command": ["clangd", "--log=verbose"],
+      "extensions": [".c", ".h"],
+      "stderr_log_file": ".logs/clangd.log"
+    }
+  }
+}`
+      const projectPath = join(tempProject, ".opencode", "oh-my-opencode.jsonc")
+      writeFileSync(projectPath, projectJsonc, "utf-8")
+
+      process.chdir(tempProject)
+      const servers = getMergedServers()
+      const found = servers.find((server) => server.id === "clangd" && server.source === "project")
+
+      expect(found?.stderrLogFile).toBe(".logs/clangd.log")
+    } finally {
+      process.chdir(originalCwd)
+      rmSync(tempProject, { recursive: true, force: true })
+    }
+  })
+
+  it("loads stderr log file from camelCase project LSP config alias", () => {
+    const originalCwd = process.cwd()
+    const tempProject = join(tmpdir(), `omo-test-project-stderr-log-alias-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    try {
+      mkdirSync(join(tempProject, ".opencode"), { recursive: true })
+      const projectJsonc = `{
+  "lsp": {
+    "clangd": {
+      "command": ["clangd", "--log=verbose"],
+      "extensions": [".c", ".h"],
+      "stderrLogFile": ".logs/clangd-alias.log"
+    }
+  }
+}`
+      const projectPath = join(tempProject, ".opencode", "oh-my-opencode.jsonc")
+      writeFileSync(projectPath, projectJsonc, "utf-8")
+
+      process.chdir(tempProject)
+      const servers = getMergedServers()
+      const found = servers.find((server) => server.id === "clangd" && server.source === "project")
+
+      expect(found?.stderrLogFile).toBe(".logs/clangd-alias.log")
+    } finally {
+      process.chdir(originalCwd)
+      rmSync(tempProject, { recursive: true, force: true })
+    }
+  })
 })

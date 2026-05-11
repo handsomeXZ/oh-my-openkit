@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs"
-import { tmpdir } from "os"
 import { join } from "path"
+import os from "os"
 
 import * as configModule from "./config"
 import { lspManager } from "./lsp-server"
@@ -13,10 +13,10 @@ const diagnosticsMock = mock(async (_filePath: string) => ({ items: [] as Diagno
 const getClientMock = mock(async () => ({ diagnostics: diagnosticsMock }))
 const releaseClientMock = mock(() => {})
 
-function createDiagnostic(message: string): Diagnostic {
+function createDiagnostic(message: string, severity = 1): Diagnostic {
   return {
     message,
-    severity: 1,
+    severity,
     range: {
       start: { line: 0, character: 0 },
       end: { line: 0, character: 1 },
@@ -40,7 +40,7 @@ describe("directory diagnostics", () => {
         priority: 1,
       },
     })
-    spyOn(lspManager, "getClient").mockImplementation(getClientMock as never)
+    spyOn(lspManager, "getClient").mockImplementation(getClientMock)
     spyOn(lspManager, "releaseClient").mockImplementation(releaseClientMock)
   })
 
@@ -50,7 +50,7 @@ describe("directory diagnostics", () => {
 
   describe("isDirectoryPath", () => {
     it("returns true for existing directory", () => {
-      const tmp = mkdtempSync(join(tmpdir(), "omo-isdir-"))
+      const tmp = mkdtempSync(join(os.tmpdir(), "omo-isdir-"))
       try {
         expect(isDirectoryPath(tmp)).toBe(true)
       } finally {
@@ -59,7 +59,7 @@ describe("directory diagnostics", () => {
     })
 
     it("returns false for existing file", () => {
-      const tmp = mkdtempSync(join(tmpdir(), "omo-isdir-file-"))
+      const tmp = mkdtempSync(join(os.tmpdir(), "omo-isdir-file-"))
       try {
         const file = join(tmp, "test.txt")
         writeFileSync(file, "content")
@@ -70,14 +70,14 @@ describe("directory diagnostics", () => {
     })
 
     it("returns false for non-existent path", () => {
-      const nonExistent = join(tmpdir(), "omo-nonexistent-" + Date.now())
+      const nonExistent = join(os.tmpdir(), "omo-nonexistent-" + Date.now())
       expect(isDirectoryPath(nonExistent)).toBe(false)
     })
   })
 
   describe("aggregateDiagnosticsForDirectory", () => {
     it("throws error when extension does not start with dot", async () => {
-      const tmp = mkdtempSync(join(tmpdir(), "omo-aggr-ext-"))
+      const tmp = mkdtempSync(join(os.tmpdir(), "omo-aggr-ext-"))
       try {
         await expect(aggregateDiagnosticsForDirectory(tmp, "ts")).rejects.toThrow(
           'Extension must start with a dot (e.g., ".ts", not "ts")'
@@ -88,14 +88,14 @@ describe("directory diagnostics", () => {
     })
 
     it("throws error when directory does not exist", async () => {
-      const nonExistent = join(tmpdir(), "omo-nonexistent-dir-" + Date.now())
+      const nonExistent = join(os.tmpdir(), "omo-nonexistent-dir-" + Date.now())
       await expect(aggregateDiagnosticsForDirectory(nonExistent, ".ts")).rejects.toThrow(
         "Directory does not exist"
       )
     })
 
     it("#given diagnostics from multiple files #when aggregating directory diagnostics #then each entry includes the source file path", async () => {
-      const tmp = mkdtempSync(join(tmpdir(), "omo-aggr-files-"))
+      const tmp = mkdtempSync(join(os.tmpdir(), "omo-aggr-files-"))
       try {
         const firstFile = join(tmp, "first.ts")
         const secondFile = join(tmp, "second.ts")
@@ -111,6 +111,25 @@ describe("directory diagnostics", () => {
 
         expect(result).toContain(`${firstFile}: error at 1:0: problem in ${firstFile}`)
         expect(result).toContain(`${secondFile}: error at 1:0: problem in ${secondFile}`)
+      } finally {
+        rmSync(tmp, { recursive: true, force: true })
+      }
+    })
+
+    it("#given raw minSeverity override #when aggregating directory diagnostics #then threshold wins over severity string", async () => {
+      const tmp = mkdtempSync(join(os.tmpdir(), "omo-aggr-minseverity-"))
+      try {
+        const file = join(tmp, "first.ts")
+        writeFileSync(file, "export const first = true\n")
+
+        diagnosticsMock.mockImplementation(async () => ({
+          items: [createDiagnostic("warning stays", 2), createDiagnostic("information is filtered", 3)],
+        }))
+
+        const result = await aggregateDiagnosticsForDirectory(tmp, ".ts", "hint", undefined, 2)
+
+        expect(result).toContain("warning stays")
+        expect(result).not.toContain("information is filtered")
       } finally {
         rmSync(tmp, { recursive: true, force: true })
       }

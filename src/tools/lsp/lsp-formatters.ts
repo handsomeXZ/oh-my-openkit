@@ -1,5 +1,5 @@
 import { SYMBOL_KIND_MAP, SEVERITY_MAP } from "./constants"
-import { uriToPath } from "./lsp-client-wrapper"
+import { uriToPath } from "./file-path-utils"
 import type {
   Diagnostic,
   DocumentSymbol,
@@ -175,9 +175,14 @@ export function formatApplyResult(result: ApplyResult): string {
   const lines: string[] = []
 
   if (result.success) {
-    lines.push(`Applied ${result.totalEdits} edit(s) to ${result.filesModified.length} file(s):`)
-    for (const file of result.filesModified) {
-      lines.push(`  - ${file}`)
+    if (result.message) {
+      lines.push(result.message)
+    }
+    if (result.totalEdits > 0 || result.filesModified.length > 0 || !result.message) {
+      lines.push(`Applied ${result.totalEdits} edit(s) to ${result.filesModified.length} file(s):`)
+      for (const file of result.filesModified) {
+        lines.push(`  - ${file}`)
+      }
     }
   } else {
     lines.push("Failed to apply some changes:")

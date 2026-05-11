@@ -11,6 +11,9 @@ export class LSPClientConnection extends LSPClientTransport {
       rootPath: this.root,
       workspaceFolders: [{ uri: rootUri, name: "workspace" }],
       capabilities: {
+        window: {
+          workDoneProgress: true,
+        },
         textDocument: {
           hover: { contentFormat: ["markdown", "plaintext"] },
           definition: { linkSupport: true },

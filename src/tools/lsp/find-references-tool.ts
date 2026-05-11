@@ -1,8 +1,8 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import { DEFAULT_MAX_REFERENCES } from "./constants"
+import { lspFacade } from "./facade/lsp-facade"
 import { formatLocation } from "./lsp-formatters"
-import { withLspClient } from "./lsp-client-wrapper"
 import type { Location } from "./types"
 
 export const lsp_find_references: ToolDefinition = tool({
@@ -15,11 +15,7 @@ export const lsp_find_references: ToolDefinition = tool({
   },
   execute: async (args, _context) => {
     try {
-      const result = await withLspClient(args.filePath, async (client) => {
-        return (await client.references(args.filePath, args.line, args.character, args.includeDeclaration ?? true)) as
-          | Location[]
-          | null
-      })
+      const result = (await lspFacade.findReferences(args)) as Location[] | null
 
       if (!result || result.length === 0) {
         const output = "No references found"

@@ -17,6 +17,7 @@ export function findServerForExtension(ext: string): ServerLookupResult {
           priority: server.priority,
           env: server.env,
           initialization: server.initialization,
+          stderrLogFile: server.stderrLogFile,
         },
       }
     }

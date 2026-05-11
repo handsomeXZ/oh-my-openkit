@@ -3,59 +3,98 @@ import { resolve } from "path"
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import { DEFAULT_MAX_DIAGNOSTICS } from "./constants"
-import { aggregateDiagnosticsForDirectory } from "./directory-diagnostics"
-import { inferExtensionFromDirectory } from "./infer-extension"
-import { filterDiagnosticsBySeverity, formatDiagnostic } from "./lsp-formatters"
-import { isDirectoryPath, withLspClient } from "./lsp-client-wrapper"
-import type { Diagnostic } from "./types"
+import {
+  diagnosticMatchesSeverityThreshold,
+  resolveSerenaMinSeverity,
+  toSerenaDiagnosticSeverity,
+} from "./diagnostics-severity"
+import { lspFacade } from "./facade/lsp-facade"
+import { formatDiagnostic } from "./lsp-formatters"
+import { isDirectoryPath } from "./file-path-utils"
 
 export const lsp_diagnostics: ToolDefinition = tool({
   description:
-    'Get errors, warnings, hints from language server BEFORE running build. Works for both single files and directories - file extension is auto-detected for directories.',
+    'Get errors, warnings, hints from language server BEFORE running build. Use filePath for a single file, or filePath with extension for a directory. Do NOT pass both filePath and directory — use filePath for everything.',
   args: {
     filePath: tool.schema
       .string()
+      .optional()
       .describe("File or directory path to check diagnostics for"),
+    directory: tool.schema
+      .string()
+      .optional()
+      .describe("Alias for filePath when checking a directory. Do NOT provide both filePath and directory."),
     severity: tool.schema
       .enum(["error", "warning", "information", "hint", "all"])
       .optional()
-      .describe("Filter by severity level"),
+      .describe("Minimum severity threshold. warning includes errors and warnings, hint/all includes every diagnostic."),
+    extension: tool.schema
+      .string()
+      .optional()
+      .describe("Required if target is a directory. E.g., '.ts', '.py', '.go', '.java'"),
+    startLine: tool.schema
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Optional 0-based start line passed through to serena-lsp diagnostics"),
+    endLine: tool.schema
+      .number()
+      .int()
+      .min(-1)
+      .optional()
+      .describe("Optional 0-based end line passed through to serena-lsp diagnostics. Use -1 for end of file."),
+    maxAnswerChars: tool.schema
+      .number()
+      .int()
+      .min(-1)
+      .optional()
+      .describe("Optional serena-lsp result character limit. Use -1 for no explicit limit."),
+    minSeverity: tool.schema
+      .number()
+      .int()
+      .min(1)
+      .max(4)
+      .optional()
+      .describe("Optional raw serena-lsp severity threshold: 1 error, 2 warning, 3 information, 4 hint."),
   },
-  execute: async (args, _context) => {
+  execute: async (args, _context): Promise<string> => {
     try {
-      if (!args.filePath) {
-        throw new Error("'filePath' parameter is required.")
+      const targetPath = args.filePath ?? args.directory
+      if (!targetPath) {
+        throw new Error("Provide either 'filePath' or 'directory' parameter.")
       }
-      const absPath = resolve(args.filePath)
+      if (args.filePath && args.directory) {
+        throw new Error("Provide only one of 'filePath' or 'directory', not both.")
+      }
 
-      if (isDirectoryPath(absPath)) {
-        const extension = inferExtensionFromDirectory(absPath)
-        if (!extension) {
+      const minSeverity = resolveSerenaMinSeverity(args.severity, toSerenaDiagnosticSeverity(args.minSeverity))
+      const normalizedArgs = {
+        ...args,
+        filePath: targetPath,
+        directory: undefined,
+        minSeverity,
+      }
+
+      if (isDirectoryPath(resolve(targetPath))) {
+        if (!args.extension) {
           throw new Error(
-            `No supported source files found in directory: ${absPath}`
+            `Directory path requires 'extension' parameter.\n\n` +
+              `Example: lsp_diagnostics(filePath="src", extension=".ts")\n\n` +
+              `Supported extensions: .ts, .tsx, .js, .py, .go, etc.`
           )
         }
-        return await aggregateDiagnosticsForDirectory(absPath, extension, args.severity)
+        const directoryOutput = await lspFacade.diagnostics(normalizedArgs)
+        return typeof directoryOutput === "string" ? directoryOutput : "No diagnostics found"
       }
 
-      const result = await withLspClient(args.filePath, async (client) => {
-        return (await client.diagnostics(args.filePath)) as { items?: Diagnostic[] } | Diagnostic[] | null
-      })
-
-      let diagnostics: Diagnostic[] = []
-      if (result) {
-        if (Array.isArray(result)) {
-          diagnostics = result
-        } else if (result.items) {
-          diagnostics = result.items
-        }
-      }
-
-      diagnostics = filterDiagnosticsBySeverity(diagnostics, args.severity)
+      const diagnosticsOutput = await lspFacade.diagnostics(normalizedArgs)
+      const diagnostics = Array.isArray(diagnosticsOutput)
+        ? diagnosticsOutput.filter((diagnostic) => diagnosticMatchesSeverityThreshold(diagnostic.severity, minSeverity))
+        : []
 
       if (diagnostics.length === 0) {
-        const output = "No diagnostics found"
-        return output
+        return "No diagnostics found"
       }
 
       const total = diagnostics.length
@@ -65,11 +104,9 @@ export const lsp_diagnostics: ToolDefinition = tool({
       if (truncated) {
         lines.unshift(`Found ${total} diagnostics (showing first ${DEFAULT_MAX_DIAGNOSTICS}):`)
       }
-      const output = lines.join("\n")
-      return output
+      return lines.join("\n")
     } catch (e) {
-      const output = `Error: ${e instanceof Error ? e.message : String(e)}`
-      throw new Error(output)
+      return `Error: ${e instanceof Error ? e.message : String(e)}`
     }
   },
 })

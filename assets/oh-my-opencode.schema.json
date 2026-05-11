@@ -6110,6 +6110,74 @@
       ],
       "additionalProperties": false
     },
+    "lsp": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "builtin",
+            "serena"
+          ]
+        },
+        "serena": {
+          "type": "object",
+          "properties": {
+            "transport": {
+              "type": "string",
+              "enum": [
+                "managed-http",
+                "stdio"
+              ]
+            },
+            "wrapperCommand": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "serenaCommand": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "command": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "env": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "requiredTools": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "projectRoot": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "projectRoot"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "websearch": {
       "type": "object",
       "properties": {

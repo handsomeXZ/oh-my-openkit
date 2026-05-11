@@ -1,13 +1,18 @@
 import { readFileSync, writeFileSync } from "fs"
 
 import { uriToPath } from "./lsp-client-wrapper"
-import type { TextEdit, WorkspaceEdit } from "./types"
+import type { RenameResult, TextEdit, WorkspaceEdit } from "./types"
 
 export interface ApplyResult {
   success: boolean
   filesModified: string[]
   totalEdits: number
   errors: string[]
+  message?: string
+}
+
+function isAppliedWorkspaceEdit(edit: RenameResult): edit is NonNullable<RenameResult> & { applied: true; message: string } {
+  return typeof edit === "object" && edit !== null && "applied" in edit && edit.applied === true
 }
 
 function applyTextEditsToFile(filePath: string, edits: TextEdit[]): { success: boolean; editCount: number; error?: string } {
@@ -118,4 +123,12 @@ export function applyWorkspaceEdit(edit: WorkspaceEdit | null): ApplyResult {
   }
 
   return result
+}
+
+export function applyRenameResult(edit: RenameResult): ApplyResult {
+  if (isAppliedWorkspaceEdit(edit)) {
+    return { success: true, filesModified: [], totalEdits: 0, errors: [], message: edit.message }
+  }
+
+  return applyWorkspaceEdit(edit)
 }

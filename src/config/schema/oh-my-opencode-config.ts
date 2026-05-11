@@ -13,6 +13,7 @@ import { BuiltinCommandNameSchema } from "./commands"
 import { ExperimentalConfigSchema } from "./experimental"
 import { GitMasterConfigSchema } from "./git-master"
 import { KeywordDetectorConfigSchema } from "./keyword-detector"
+import { LspConfigSchema } from "./lsp"
 import { NotificationConfigSchema } from "./notification"
 import { OpenClawConfigSchema } from "./openclaw"
 import { ModelCapabilitiesConfigSchema } from "./model-capabilities"
@@ -77,6 +78,7 @@ export const OhMyOpenCodeConfigSchema = z.object({
     git_env_prefix: "GIT_MASTER=1",
   }),
   browser_automation_engine: BrowserAutomationConfigSchema.optional(),
+  lsp: LspConfigSchema.optional(),
   websearch: WebsearchConfigSchema.optional(),
   tmux: TmuxConfigSchema.optional(),
   sisyphus: SisyphusConfigSchema.optional(),

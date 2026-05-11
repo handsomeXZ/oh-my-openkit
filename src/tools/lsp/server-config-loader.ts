@@ -13,6 +13,8 @@ interface LspEntry {
   priority?: number
   env?: Record<string, string>
   initialization?: Record<string, unknown>
+  stderr_log_file?: string
+  stderrLogFile?: string
 }
 
 interface ConfigJson {
@@ -23,6 +25,10 @@ type ConfigSource = "project" | "user" | "opencode"
 
 interface ServerWithSource extends ResolvedServer {
   source: ConfigSource
+}
+
+function getStderrLogFile(entry: LspEntry): string | undefined {
+  return entry.stderr_log_file ?? entry.stderrLogFile
 }
 
 export function loadJsonFile<T>(path: string): T | null {
@@ -88,6 +94,7 @@ export function getMergedServers(): ServerWithSource[] {
         priority: entry.priority ?? 0,
         env: entry.env,
         initialization: entry.initialization,
+        stderrLogFile: getStderrLogFile(entry),
         source,
       })
       seen.add(id)

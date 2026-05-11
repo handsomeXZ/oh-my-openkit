@@ -5,6 +5,7 @@ export interface LSPServerConfig {
   disabled?: boolean
   env?: Record<string, string>
   initialization?: Record<string, unknown>
+  stderrLogFile?: string
 }
 
 export interface Position {
@@ -94,6 +95,13 @@ export interface WorkspaceEdit {
   documentChanges?: (TextDocumentEdit | CreateFile | RenameFile | DeleteFile)[]
 }
 
+export interface AppliedWorkspaceEdit {
+  applied: true
+  message: string
+}
+
+export type RenameResult = WorkspaceEdit | AppliedWorkspaceEdit | null
+
 export interface PrepareRenameResult {
   range: Range
   placeholder?: string
@@ -121,4 +129,5 @@ export interface ResolvedServer {
   priority: number
   env?: Record<string, string>
   initialization?: Record<string, unknown>
+  stderrLogFile?: string
 }

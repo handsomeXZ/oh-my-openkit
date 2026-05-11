@@ -7,7 +7,9 @@ import {
   type MessageConnection,
 } from "vscode-jsonrpc/node"
 import type { Diagnostic, ResolvedServer } from "./types"
+import { getLspProgressToastManager } from "../../features/lsp-progress-toast/manager"
 import { spawnProcess, type UnifiedProcess } from "./lsp-process"
+import { appendLspStderrLog } from "./stderr-log-writer"
 import { getLspServerAdditionalPathBases } from "./server-path-bases"
 import { log } from "../../shared/logger"
 export class LSPClientTransport {
@@ -16,7 +18,10 @@ export class LSPClientTransport {
   protected readonly stderrBuffer: string[] = []
   protected processExited = false
   protected readonly diagnosticsStore = new Map<string, Diagnostic[]>()
+  protected readonly workDoneTokens = new Set<string | number>()
+  protected readonly progressState = new Map<string | number, { title?: string; message?: string; percentage?: number }>()
   protected readonly REQUEST_TIMEOUT = 15000
+  protected stderrLogWriteFailed = false
 
   constructor(protected root: string, protected server: ResolvedServer) {}
   async start(): Promise<void> {
@@ -93,7 +98,15 @@ export class LSPClientTransport {
     })
 
     this.connection.onRequest("client/registerCapability", () => null)
-    this.connection.onRequest("window/workDoneProgress/create", () => null)
+    this.connection.onRequest("window/workDoneProgress/create", (params: { token?: string | number }) => {
+      if (params?.token !== undefined) {
+        this.workDoneTokens.add(params.token)
+      }
+      return null
+    })
+    this.connection.onNotification("$/progress", (params: { token?: string | number; value?: Record<string, unknown> }) => {
+      this.handleWorkDoneProgress(params)
+    })
 
     this.connection.onClose(() => {
       this.processExited = true
@@ -117,6 +130,7 @@ export class LSPClientTransport {
           if (done) break
           const text = decoder.decode(value)
           this.stderrBuffer.push(text)
+          this.writeStderrLog(text)
           if (this.stderrBuffer.length > 100) {
             this.stderrBuffer.shift()
           }
@@ -124,6 +138,54 @@ export class LSPClientTransport {
       } catch {}
     }
     read()
+  }
+
+  protected handleWorkDoneProgress(params: { token?: string | number; value?: Record<string, unknown> }): void {
+    const token = params?.token
+    const value = params?.value
+    if (token === undefined || !value || typeof value.kind !== "string") return
+    if (!this.workDoneTokens.has(token) && value.kind !== "begin") return
+
+    const nextState = {
+      title: typeof value.title === "string" ? value.title : this.progressState.get(token)?.title,
+      message: typeof value.message === "string" ? value.message : this.progressState.get(token)?.message,
+      percentage: typeof value.percentage === "number" ? value.percentage : this.progressState.get(token)?.percentage,
+    }
+
+    if (value.kind === "begin") {
+      this.workDoneTokens.add(token)
+      this.progressState.set(token, nextState)
+    } else if (value.kind === "report") {
+      this.progressState.set(token, nextState)
+    } else if (value.kind === "end") {
+      this.progressState.delete(token)
+      this.workDoneTokens.delete(token)
+    } else {
+      return
+    }
+
+    getLspProgressToastManager()?.handleProgress({
+      token,
+      kind: value.kind,
+      serverId: this.server.id,
+      root: this.root,
+      title: nextState.title,
+      message: nextState.message,
+      percentage: nextState.percentage,
+    })
+  }
+
+  protected writeStderrLog(text: string): void {
+    const logPath = this.server.stderrLogFile
+    if (!logPath) return
+
+    try {
+      appendLspStderrLog(this.root, logPath, text)
+    } catch (error) {
+      if (this.stderrLogWriteFailed) return
+      this.stderrLogWriteFailed = true
+      log("[LSP] Failed to write stderr log:", error)
+    }
   }
 
   protected sendRequest<T>(method: string): Promise<T>
@@ -205,6 +267,16 @@ export class LSPClientTransport {
       } catch {}
     }
     this.processExited = true
+    const progressManager = getLspProgressToastManager()
+    for (const token of this.workDoneTokens) {
+      progressManager?.clearProgress({
+        token,
+        serverId: this.server.id,
+        root: this.root,
+      })
+    }
     this.diagnosticsStore.clear()
+    this.workDoneTokens.clear()
+    this.progressState.clear()
   }
 }

@@ -1,9 +1,9 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
+import { lspFacade } from "./facade/lsp-facade"
 import { formatApplyResult, formatPrepareRenameResult } from "./lsp-formatters"
-import { withLspClient } from "./lsp-client-wrapper"
-import { applyWorkspaceEdit } from "./workspace-edit"
-import type { PrepareRenameDefaultBehavior, PrepareRenameResult, WorkspaceEdit } from "./types"
+import { applyRenameResult } from "./workspace-edit"
+import type { PrepareRenameDefaultBehavior, PrepareRenameResult, RenameResult } from "./types"
 
 export const lsp_prepare_rename: ToolDefinition = tool({
   description: "Check if rename is valid. Use BEFORE lsp_rename.",
@@ -14,12 +14,10 @@ export const lsp_prepare_rename: ToolDefinition = tool({
   },
   execute: async (args, _context) => {
     try {
-      const result = await withLspClient(args.filePath, async (client) => {
-        return (await client.prepareRename(args.filePath, args.line, args.character)) as
-          | PrepareRenameResult
-          | PrepareRenameDefaultBehavior
-          | null
-      })
+      const result = (await lspFacade.prepareRename(args)) as
+        | PrepareRenameResult
+        | PrepareRenameDefaultBehavior
+        | null
       const output = formatPrepareRenameResult(result)
       return output
     } catch (e) {
@@ -39,10 +37,8 @@ export const lsp_rename: ToolDefinition = tool({
   },
   execute: async (args, _context) => {
     try {
-      const edit = await withLspClient(args.filePath, async (client) => {
-        return (await client.rename(args.filePath, args.line, args.character, args.newName)) as WorkspaceEdit | null
-      })
-      const result = applyWorkspaceEdit(edit)
+      const edit = (await lspFacade.rename(args)) as RenameResult
+      const result = applyRenameResult(edit)
       const output = formatApplyResult(result)
       return output
     } catch (e) {

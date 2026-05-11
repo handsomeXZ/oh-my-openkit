@@ -28,6 +28,7 @@ describe("spawnProcess", () => {
       //#then
       expect(nodeSpawnSpy).toHaveBeenCalled()
       expect(result).not.toBeNull()
+      await result?.exited.catch(() => 1)
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform })
       nodeSpawnSpy.mockRestore()

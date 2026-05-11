@@ -1,8 +1,8 @@
 import { tool, type ToolDefinition } from "@opencode-ai/plugin/tool"
 
 import { DEFAULT_MAX_SYMBOLS } from "./constants"
+import { lspFacade } from "./facade/lsp-facade"
 import { formatDocumentSymbol, formatSymbolInfo } from "./lsp-formatters"
-import { withLspClient } from "./lsp-client-wrapper"
 import type { DocumentSymbol, SymbolInfo } from "./types"
 
 export const lsp_symbols: ToolDefinition = tool({
@@ -26,9 +26,7 @@ export const lsp_symbols: ToolDefinition = tool({
           return "Error: 'query' is required for workspace scope"
         }
 
-        const result = await withLspClient(args.filePath, async (client) => {
-          return (await client.workspaceSymbols(args.query!)) as SymbolInfo[] | null
-        })
+        const result = (await lspFacade.workspaceSymbols(args.filePath, args.query)) as SymbolInfo[] | null
 
         if (!result || result.length === 0) {
           return "No symbols found"
@@ -44,9 +42,7 @@ export const lsp_symbols: ToolDefinition = tool({
         }
         return lines.join("\n")
       } else {
-        const result = await withLspClient(args.filePath, async (client) => {
-          return (await client.documentSymbols(args.filePath)) as DocumentSymbol[] | SymbolInfo[] | null
-        })
+        const result = (await lspFacade.documentSymbols(args.filePath)) as DocumentSymbol[] | SymbolInfo[] | null
 
         if (!result || result.length === 0) {
           return "No symbols found"

@@ -4,6 +4,8 @@ import type { PluginContext, TmuxConfig } from "./plugin/types"
 
 import type { SubagentSessionCreatedEvent } from "./features/background-agent"
 import { BackgroundManager } from "./features/background-agent"
+import { initLspProgressToastManager } from "./features/lsp-progress-toast/manager"
+import { createSerenaLifecycleToastListener, SerenaServiceManager } from "./features/serena-service"
 import { SkillMcpManager } from "./features/skill-mcp-manager"
 import { createModelFallbackControllerAccessor } from "./hooks/model-fallback"
 import { initTaskToastManager } from "./features/task-toast-manager"
@@ -18,7 +20,9 @@ import type { ModelFallbackControllerAccessor } from "./hooks/model-fallback"
 type CreateManagersDeps = {
   BackgroundManagerClass: typeof BackgroundManager
   SkillMcpManagerClass: typeof SkillMcpManager
+  SerenaServiceManagerClass: typeof SerenaServiceManager
   TmuxSessionManagerClass: typeof TmuxSessionManager
+  initLspProgressToastManagerFn: typeof initLspProgressToastManager
   initTaskToastManagerFn: typeof initTaskToastManager
   registerManagerForCleanupFn: typeof registerManagerForCleanup
   createConfigHandlerFn: typeof createConfigHandler
@@ -28,7 +32,9 @@ type CreateManagersDeps = {
 const defaultCreateManagersDeps: CreateManagersDeps = {
   BackgroundManagerClass: BackgroundManager,
   SkillMcpManagerClass: SkillMcpManager,
+  SerenaServiceManagerClass: SerenaServiceManager,
   TmuxSessionManagerClass: TmuxSessionManager,
+  initLspProgressToastManagerFn: initLspProgressToastManager,
   initTaskToastManagerFn: initTaskToastManager,
   registerManagerForCleanupFn: registerManagerForCleanup,
   createConfigHandlerFn: createConfigHandler,
@@ -39,6 +45,7 @@ export type Managers = {
   tmuxSessionManager: TmuxSessionManager
   backgroundManager: BackgroundManager
   skillMcpManager: SkillMcpManager
+  serenaServiceManager: SerenaServiceManager
   configHandler: ReturnType<typeof createConfigHandler>
   modelFallbackControllerAccessor: ModelFallbackControllerAccessor
 }
@@ -114,8 +121,11 @@ export function createManagers(args: {
   })
 
   deps.initTaskToastManagerFn(ctx.client)
+  deps.initLspProgressToastManagerFn(ctx.client)
 
   const skillMcpManager = new deps.SkillMcpManagerClass()
+  const serenaServiceManager = new deps.SerenaServiceManagerClass()
+  serenaServiceManager.subscribeSnapshots(createSerenaLifecycleToastListener(ctx.client))
 
   const configHandler = deps.createConfigHandlerFn({
     ctx: { directory: ctx.directory, client: ctx.client },
@@ -126,6 +136,7 @@ export function createManagers(args: {
     tmuxSessionManager,
     backgroundManager,
     skillMcpManager,
+    serenaServiceManager,
     configHandler,
     modelFallbackControllerAccessor,
   }

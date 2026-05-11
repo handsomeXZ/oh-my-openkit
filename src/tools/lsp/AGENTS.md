@@ -1,6 +1,6 @@
 # src/tools/lsp/ — LSP Tool Implementations
 
-**Generated:** 2026-05-08
+**Generated:** 2026-03-06
 
 ## OVERVIEW
 
@@ -68,3 +68,16 @@ file.ts → extension (.ts) → language-mappings → server ID (typescript)
 - 1s delay after `didOpen` for server initialization before sending requests
 - `lsp_servers` tool was removed — duplicates OpenCode's built-in `LspServers` tool
 - Synced with OpenCode's `server.ts` — when adding servers, check upstream first
+
+## OWNERSHIP BOUNDARY
+
+Keep future changes split by merge risk:
+
+- **Sync zone**: `lsp-client.ts`, `lsp-client-connection.ts`, `lsp-client-transport.ts`, `lsp-process.ts`, `lsp-server.ts`, `workspace-edit.ts`, `server-definitions.ts`, `language-mappings.ts`
+  - Prefer upstream-compatible protocol/runtime changes only
+  - Avoid local product policy unless absolutely necessary
+- **Local adapter zone**: `facade/`, `providers/`, `file-path-utils.ts`, `workspace-root-policy.ts`, `server-lookup-error.ts`, `server-config-loader.ts`, `directory-diagnostics.ts`
+  - Put local workspace-root policy, diagnostics orchestration, formatting, and future customization here
+  - Keep public `lsp_*` tools stable and route behavior through these adapters first
+
+Rule of thumb: if a change is about protocol/process correctness, touch sync zone; if it is about repo-specific behavior, fallback policy, or extension points, touch local adapter zone.
