@@ -1,6 +1,7 @@
 import { SerenaCapabilityMismatchError } from "../../tools/lsp/providers/serena-mcp-client"
 import { createSerenaProjectRootComparisonKey } from "../../cli/serena-service/project-root"
 import type { SerenaServiceStatus } from "../../cli/serena-service/types"
+import { log } from "../../shared"
 import { createSnapshot, buildManagedHttpFacadeConfig, getErrorMessage } from "./manager-snapshot"
 import type {
   SerenaLifecycleFacade,
@@ -49,6 +50,15 @@ async function tryAttach(params: {
 }): Promise<{ ok: true } | { ok: false; issueCode: SerenaManagerIssueCode; lastError: string; latestStatus: SerenaServiceStatus }> {
   const { config, status, facade, dependencies } = params
 
+  log("[serena-service-manager] Attempting attachment", {
+    projectRoot: config.projectRoot,
+    advertisedProjectRoot: status.projectRoot,
+    statusState: status.state,
+    mcpUrl: status.mcpUrl,
+    startedBy: status.startedBy,
+    lastError: status.lastError,
+  })
+
   if (isProjectRootMismatch(status, config.projectRoot)) {
     return {
       ok: false,
@@ -73,6 +83,14 @@ async function tryAttach(params: {
     return { ok: true }
   } catch (error) {
     const latestStatus = await dependencies.getStatus(config.projectRoot).catch(() => status)
+    log("[serena-service-manager] Attachment failed", {
+      projectRoot: config.projectRoot,
+      attemptedMcpUrl: status.mcpUrl,
+      latestMcpUrl: latestStatus.mcpUrl,
+      latestState: latestStatus.state,
+      latestProjectRoot: latestStatus.projectRoot,
+      lastError: getErrorMessage(error),
+    })
     if (isProjectRootMismatch(latestStatus, config.projectRoot)) {
       return {
         ok: false,
@@ -110,6 +128,14 @@ export async function runSerenaManagerLifecycle(params: {
   publishSnapshot(createSnapshot({ now: dependencies.now, state: "starting", projectRoot: config.projectRoot }))
 
   const initialStatus = await dependencies.getStatus(config.projectRoot)
+  log("[serena-service-manager] Loaded initial managed-http service status", {
+    projectRoot: config.projectRoot,
+    state: initialStatus.state,
+    mcpUrl: initialStatus.mcpUrl,
+    statusProjectRoot: initialStatus.projectRoot,
+    lastError: initialStatus.lastError,
+    startedBy: initialStatus.startedBy,
+  })
   let lastFailure: { issueCode: SerenaManagerIssueCode; lastError: string; latestStatus: SerenaServiceStatus } | null = null
 
   if (canAttach(initialStatus)) {
@@ -125,7 +151,19 @@ export async function runSerenaManagerLifecycle(params: {
   let ensuredStatus: SerenaServiceStatus
   try {
 		ensuredStatus = await dependencies.ensure(config)
+    log("[serena-service-manager] Ensure completed", {
+      projectRoot: config.projectRoot,
+      state: ensuredStatus.state,
+      mcpUrl: ensuredStatus.mcpUrl,
+      statusProjectRoot: ensuredStatus.projectRoot,
+      lastError: ensuredStatus.lastError,
+      startedBy: ensuredStatus.startedBy,
+    })
   } catch (error) {
+    log("[serena-service-manager] Ensure threw", {
+      projectRoot: config.projectRoot,
+      lastError: getErrorMessage(error),
+    })
     return createSnapshot({
       now: dependencies.now,
       state: "error",
@@ -138,6 +176,15 @@ export async function runSerenaManagerLifecycle(params: {
 
   let currentStatus = ensuredStatus
   for (let attempt = 1; attempt <= dependencies.retryAttempts; attempt++) {
+    log("[serena-service-manager] Retry loop iteration", {
+      projectRoot: config.projectRoot,
+      attempt,
+      retryAttempts: dependencies.retryAttempts,
+      state: currentStatus.state,
+      mcpUrl: currentStatus.mcpUrl,
+      statusProjectRoot: currentStatus.projectRoot,
+      lastError: currentStatus.lastError,
+    })
     if (isProjectRootMismatch(currentStatus, config.projectRoot)) {
       return createSnapshot({
         now: dependencies.now,
@@ -162,6 +209,14 @@ export async function runSerenaManagerLifecycle(params: {
     if (attempt < dependencies.retryAttempts) {
       await dependencies.wait(dependencies.retryDelayMs)
       currentStatus = await dependencies.getStatus(config.projectRoot)
+      log("[serena-service-manager] Refreshed service status after retry wait", {
+        projectRoot: config.projectRoot,
+        attempt,
+        state: currentStatus.state,
+        mcpUrl: currentStatus.mcpUrl,
+        statusProjectRoot: currentStatus.projectRoot,
+        lastError: currentStatus.lastError,
+      })
     }
   }
 

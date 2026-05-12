@@ -39,24 +39,37 @@ export class SerenaServiceManager {
     const serenaConfig = resolveSerenaManagerTargetConfig(pluginConfig)
 
     if (!serenaConfig) {
+      const issueCode = pluginConfig.lsp?.provider === "serena" ? "missing-project-root" : "provider-disabled"
       this.facade.reconfigure({ provider: "builtin" })
       this.publishSnapshot(createSnapshot({
         now: this.dependencies.now,
         state: "idle",
         projectRoot: pluginConfig.lsp?.serena?.projectRoot ?? null,
-        issueCode: pluginConfig.lsp?.provider === "serena" ? "missing-project-root" : "provider-disabled",
+        issueCode,
       }))
-      log("[serena-service-manager] Using builtin LSP provider")
+      log("[serena-service-manager] Using builtin LSP provider", {
+        issueCode,
+        provider: pluginConfig.lsp?.provider ?? null,
+        configuredProjectRoot: pluginConfig.lsp?.serena?.projectRoot ?? null,
+        configuredTransport: pluginConfig.lsp?.serena?.transport ?? null,
+      })
       return
     }
 
     if (this.inFlightStartups.has(serenaConfig.projectRoot)) {
+      log("[serena-service-manager] Startup already in flight; skipping duplicate start", {
+        projectRoot: serenaConfig.projectRoot,
+      })
       return
     }
 
     log("[serena-service-manager] Starting Serena lifecycle manager", {
       transport: serenaConfig.transport,
       projectRoot: serenaConfig.projectRoot,
+      wrapperCommand: serenaConfig.wrapperCommand ?? null,
+      serenaCommand: serenaConfig.serenaCommand ?? null,
+      command: serenaConfig.command ?? null,
+      requiredTools: serenaConfig.requiredTools ?? null,
     })
 
     const startupPromise = (serenaConfig.transport === "stdio" ? runSerenaStdioLifecycle : runSerenaManagerLifecycle)({
@@ -66,19 +79,37 @@ export class SerenaServiceManager {
       publishSnapshot: (snapshot) => this.publishSnapshot(snapshot),
     })
       .then((snapshot) => {
+        log("[serena-service-manager] Startup finished", {
+          projectRoot: serenaConfig.projectRoot,
+          state: snapshot.state,
+          issueCode: snapshot.issueCode,
+          mcpUrl: snapshot.mcpUrl,
+          lastError: snapshot.lastError,
+        })
         this.publishSnapshot(snapshot)
         if (snapshot.state !== "ready") {
+          log("[serena-service-manager] Falling back to builtin provider after unsuccessful Serena startup", {
+            projectRoot: serenaConfig.projectRoot,
+            state: snapshot.state,
+            issueCode: snapshot.issueCode,
+          })
           this.facade.reconfigure({ provider: "builtin" })
         }
         return snapshot
       })
       .catch((error) => {
+        const lastError = error instanceof Error ? error.message : String(error)
+        log("[serena-service-manager] Startup threw before snapshot stabilization", {
+          projectRoot: serenaConfig.projectRoot,
+          transport: serenaConfig.transport,
+          lastError,
+        })
         const snapshot = createSnapshot({
           now: this.dependencies.now,
           state: "error",
           projectRoot: serenaConfig.projectRoot,
           issueCode: "ensure-failed",
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError,
         })
         this.publishSnapshot(snapshot)
         this.facade.reconfigure({ provider: "builtin" })
@@ -116,6 +147,16 @@ export class SerenaServiceManager {
     if (snapshot.projectRoot) {
       this.snapshots.set(snapshot.projectRoot, snapshot)
     }
+
+    log("[serena-service-manager] Published snapshot", {
+      projectRoot: snapshot.projectRoot,
+      state: snapshot.state,
+      issueCode: snapshot.issueCode,
+      mcpUrl: snapshot.mcpUrl,
+      lastError: snapshot.lastError,
+      previousState: previousSnapshot?.state ?? null,
+      previousIssueCode: previousSnapshot?.issueCode ?? null,
+    })
 
     for (const listener of this.snapshotListeners) {
       try {
