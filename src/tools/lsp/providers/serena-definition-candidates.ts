@@ -1,5 +1,5 @@
 import type { SerenaSymbol } from "./serena-symbol-types"
-import { parseJsonResult } from "./serena-symbol-lookup"
+import { parseJsonResult } from "./serena-json-result"
 
 export function filterDefinitionSymbols(symbols: SerenaSymbol[]): SerenaSymbol[] {
   const sourceSymbols = symbols.filter((symbol) => {
@@ -46,7 +46,7 @@ export async function findDefinitionCandidates(
       depth: 0,
     })
 
-    const symbols = filterDefinitionSymbols(parseJsonResult<SerenaSymbol[]>(result))
+    const symbols = filterDefinitionSymbols(parseJsonResult<SerenaSymbol[]>(result, "Serena find_symbol"))
     if (symbols.length > 0) {
       return symbols
     }

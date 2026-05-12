@@ -7,13 +7,6 @@ import type { SerenaOverviewGrouped, SerenaSymbol } from "./serena-symbol-types"
 
 const IDENTIFIER_CHAR_REGEX = /[A-Za-z0-9_:~]/
 
-export function parseJsonResult<T>(value: unknown): T {
-  if (typeof value !== "string") {
-    return value as T
-  }
-  return JSON.parse(value) as T
-}
-
 export function toRelativePath(projectRoot: string, filePath: string): string {
   const normalizedRoot = projectRoot.replace(/\\/g, "/").replace(/\/$/, "")
   const normalizedFilePath = filePath.replace(/\\/g, "/")

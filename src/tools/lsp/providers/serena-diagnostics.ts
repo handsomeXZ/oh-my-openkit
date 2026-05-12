@@ -1,7 +1,7 @@
 import type { Diagnostic, Position, Range } from "../types"
 import type { LspDiagnosticsArgs } from "../provider-types"
 
-import { parseJsonResult } from "./serena-symbol-lookup"
+import { parseJsonResult } from "./serena-json-result"
 import { createSerenaDiagnosticsArgs } from "./serena-diagnostics-args"
 
 type CallSerenaTool = (toolName: string, args: Record<string, unknown>) => Promise<unknown>
@@ -111,7 +111,7 @@ export async function getSerenaFileDiagnostics(
   callTool: CallSerenaTool
 ): Promise<Diagnostic[]> {
   const result = await callTool("get_diagnostics_for_file", createSerenaDiagnosticsArgs(projectRoot, args))
-  const parsedResult = parseJsonResult<unknown>(result)
+  const parsedResult = parseJsonResult<unknown>(result, "Serena get_diagnostics_for_file")
   const diagnostics: Diagnostic[] = []
   collectDiagnostics(parsedResult, diagnostics)
   return diagnostics

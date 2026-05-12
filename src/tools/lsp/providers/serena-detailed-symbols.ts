@@ -1,5 +1,6 @@
 import { normalizeSymbolTree } from "./serena-symbol-formatters"
-import { deduplicateSymbols, extractNamePathsFromGroupedOverview, parseJsonResult } from "./serena-symbol-lookup"
+import { parseJsonResult } from "./serena-json-result"
+import { deduplicateSymbols, extractNamePathsFromGroupedOverview } from "./serena-symbol-lookup"
 import type { SerenaOverviewGrouped, SerenaSymbol } from "./serena-symbol-types"
 
 export async function getDetailedTopLevelSymbols(
@@ -8,7 +9,7 @@ export async function getDetailedTopLevelSymbols(
   callTool: (toolName: string, args: Record<string, unknown>) => Promise<unknown>
 ): Promise<SerenaSymbol[]> {
   const overviewResult = await callTool("get_symbols_overview", { relative_path: relativePath, depth })
-  const overview = parseJsonResult<SerenaOverviewGrouped>(overviewResult)
+  const overview = parseJsonResult<SerenaOverviewGrouped>(overviewResult, "Serena get_symbols_overview")
   const namePaths = extractNamePathsFromGroupedOverview(overview)
   const detailedSymbols: SerenaSymbol[] = []
 
@@ -19,7 +20,7 @@ export async function getDetailedTopLevelSymbols(
       include_body: false,
       depth,
     })
-    detailedSymbols.push(...parseJsonResult<SerenaSymbol[]>(detailResult).map((symbol) => normalizeSymbolTree(symbol)))
+    detailedSymbols.push(...parseJsonResult<SerenaSymbol[]>(detailResult, "Serena find_symbol").map((symbol) => normalizeSymbolTree(symbol)))
   }
 
   return deduplicateSymbols(detailedSymbols)
