@@ -24,10 +24,10 @@ import {
 import { findSerenaDeclaration } from "./serena-declaration"
 import { getSerenaFileDiagnostics } from "./serena-diagnostics"
 import { getDetailedTopLevelSymbols as loadDetailedTopLevelSymbols } from "./serena-detailed-symbols"
+import { parseJsonResult } from "./serena-json-result"
 import { prepareSerenaRename, renameSerenaSymbol } from "./serena-rename"
 import { findSerenaReferences } from "./serena-references"
 import {
-  parseJsonResult,
   toRelativePath,
 } from "./serena-symbol-lookup"
 import { SerenaMcpClient } from "./serena-mcp-client"
@@ -58,6 +58,21 @@ export class SerenaLspProvider implements LspProvider {
     return loadDetailedTopLevelSymbols(relativePath, depth, (toolName, args) => this.callTool(toolName, args))
   }
 
+  private async refreshRenameState(args: { failOnError: boolean; phase: "before" | "after" }): Promise<void> {
+    if (typeof this.mcpClient.disconnect !== "function" || typeof this.mcpClient.initialize !== "function") {
+      return
+    }
+
+    try {
+      await this.mcpClient.disconnect()
+      await this.mcpClient.initialize(this.config)
+    } catch (error) {
+      if (args.failOnError) {
+        throw new Error(`Failed to refresh Serena state ${args.phase} rename: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  }
+
   async gotoDefinition(args: LspPositionArgs): Promise<Location | Location[] | LocationLink[] | null> {
     return findSerenaDeclaration(this.config, args, (toolName, toolArgs) => this.callTool(toolName, toolArgs))
   }
@@ -86,7 +101,7 @@ export class SerenaLspProvider implements LspProvider {
       substring_matching: true,
     })
 
-    return filterWorkspaceSymbols(parseJsonResult<SerenaSymbol[]>(result)).map((symbol) =>
+    return filterWorkspaceSymbols(parseJsonResult<SerenaSymbol[]>(result, "Serena find_symbol")).map((symbol) =>
       convertToSymbolInfo(this.config.projectRoot, symbol)
     )
   }
@@ -103,9 +118,17 @@ export class SerenaLspProvider implements LspProvider {
   }
 
   async rename(args: LspPositionArgs & { newName: string }): Promise<RenameResult> {
-    return renameSerenaSymbol(this.config, args, {
+    await this.refreshRenameState({ failOnError: true, phase: "before" })
+
+    const result = await renameSerenaSymbol(this.config, args, {
       callTool: (toolName, toolArgs) => this.callTool(toolName, toolArgs),
       loadDetailedSymbols: (relativePath, depth) => this.getDetailedTopLevelSymbols(relativePath, depth),
     })
+
+    if (result?.applied) {
+      await this.refreshRenameState({ failOnError: false, phase: "after" })
+    }
+
+    return result
   }
 }
