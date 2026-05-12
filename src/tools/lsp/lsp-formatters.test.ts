@@ -6,14 +6,14 @@ import { pathToUri } from "./file-path-utils"
 import { formatApplyResult, formatLocation } from "./lsp-formatters"
 
 describe("formatApplyResult", () => {
-  test("#given an already-applied provider rename result #when formatted #then it does not claim local zero-edit application", () => {
+  test("#given an already-applied provider rename result #when formatted #then it marks the message as a Serena summary", () => {
     expect(formatApplyResult({
       success: true,
       filesModified: [],
       totalEdits: 0,
       errors: [],
       message: "Successfully renamed target to renamedTarget (2 changes applied)",
-    })).toBe("Successfully renamed target to renamedTarget (2 changes applied)")
+    })).toBe("Serena reported: Successfully renamed target to renamedTarget (2 changes applied)")
   })
 })
 

@@ -176,7 +176,8 @@ export function formatApplyResult(result: ApplyResult): string {
 
   if (result.success) {
     if (result.message) {
-      lines.push(result.message)
+      const isBackendSummary = result.totalEdits === 0 && result.filesModified.length === 0
+      lines.push(isBackendSummary ? `Serena reported: ${result.message}` : result.message)
     }
     if (result.totalEdits > 0 || result.filesModified.length > 0 || !result.message) {
       lines.push(`Applied ${result.totalEdits} edit(s) to ${result.filesModified.length} file(s):`)
