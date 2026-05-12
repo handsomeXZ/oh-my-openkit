@@ -117,4 +117,52 @@ describe("SerenaLspProvider reference formatting", () => {
       },
     ])
   })
+
+  test("findReferences drops grouped reference entries when no usable file path can be recovered", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "serena-provider-"))
+    const sourceDirectory = join(projectRoot, "src")
+    await mkdir(sourceDirectory, { recursive: true })
+    const filePath = join(sourceDirectory, "file.ts")
+    await writeFile(filePath, "function target() {}\n", "utf8")
+    const provider = new SerenaLspProvider({ projectRoot })
+    Object.defineProperty(provider, "mcpClient", {
+      configurable: true,
+      value: {
+        callTool: async (toolName: string, args: Record<string, unknown>) => {
+          if (toolName === "get_symbols_overview") {
+            return JSON.stringify({ Function: ["target"] })
+          }
+          if (toolName === "find_symbol" && args.relative_path === "src/file.ts") {
+            return JSON.stringify([
+              {
+                name: "target",
+                name_path: "target",
+                kind: "Function",
+                relative_path: "src/file.ts",
+                location: { relative_path: "src/file.ts", line: 0, column: 9 },
+                body_location: { start_line: 0, end_line: 0 },
+              },
+            ])
+          }
+          if (toolName === "find_referencing_symbols") {
+            return JSON.stringify({
+              Function: [
+                {
+                  name_path: "useTarget",
+                  kind: "Function",
+                  body_location: { start_line: 10, end_line: 20 },
+                  content_around_reference: "... 11:\n > 12:  target()\n... 13:",
+                },
+              ],
+            })
+          }
+          return JSON.stringify([])
+        },
+      },
+    })
+
+    const references = await provider.findReferences({ filePath, line: 1, character: 10 })
+
+    expect(references).toBeNull()
+  })
 })

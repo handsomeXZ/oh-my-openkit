@@ -3,9 +3,9 @@ import type { Location, Range } from "../types"
 import { pathToUri } from "../file-path-utils"
 
 import { resolveSerenaSymbolAtPosition } from "./serena-position-symbol"
-import { convertToLocation, toAbsolutePath } from "./serena-symbol-formatters"
+import { getSelectionRange, toAbsolutePath } from "./serena-symbol-formatters"
+import { parseJsonResult } from "./serena-json-result"
 import {
-  parseJsonResult,
   toRelativePath,
 } from "./serena-symbol-lookup"
 import type { SerenaLspProviderConfig, SerenaSymbol } from "./serena-symbol-types"
@@ -32,6 +32,18 @@ function getReferenceRange(symbol: SerenaSymbol): Range {
 
 function getReferenceRelativePath(symbol: SerenaSymbol): string | null {
   return symbol.location?.relative_path ?? symbol.relative_path ?? null
+}
+
+function convertDeclarationToLocation(projectRoot: string, symbol: SerenaSymbol): Location | null {
+  const relativePath = getReferenceRelativePath(symbol)
+  if (!relativePath) {
+    return null
+  }
+
+  return {
+    uri: pathToUri(toAbsolutePath(projectRoot, relativePath)),
+    range: getSelectionRange(symbol),
+  }
 }
 
 function convertReferenceToLocation(projectRoot: string, symbol: SerenaSymbol): Location | null {
@@ -89,7 +101,7 @@ function collectReferenceSymbols(value: unknown, symbols: SerenaSymbol[], fallba
 }
 
 function parseReferenceSymbols(value: unknown): SerenaSymbol[] {
-  const parsedResult = parseJsonResult<unknown>(value)
+  const parsedResult = parseJsonResult<unknown>(value, "Serena find_referencing_symbols")
   const symbols: SerenaSymbol[] = []
   collectReferenceSymbols(parsedResult, symbols)
   return symbols
@@ -118,7 +130,10 @@ export async function findSerenaReferences(
     .filter((location): location is Location => location !== null)
 
   if (args.includeDeclaration) {
-    locations.unshift(convertToLocation(config.projectRoot, symbol))
+    const declarationLocation = convertDeclarationToLocation(config.projectRoot, symbol)
+    if (declarationLocation) {
+      locations.unshift(declarationLocation)
+    }
   }
 
   return locations.length > 0 ? locations : null

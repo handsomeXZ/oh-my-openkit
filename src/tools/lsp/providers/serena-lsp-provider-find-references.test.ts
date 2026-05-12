@@ -127,4 +127,58 @@ describe("SerenaLspProvider findReferences", () => {
       { name_path: "target", relative_path: "src/defs.ts" },
     ])
   })
+
+  test("findReferences skips declaration entries that do not have a usable relative path", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "serena-provider-"))
+    const sourceDirectory = join(projectRoot, "src")
+    await mkdir(sourceDirectory, { recursive: true })
+    const filePath = join(sourceDirectory, "file.ts")
+    await writeFile(filePath, "const target = 1\n", "utf8")
+
+    const provider = new SerenaLspProvider({ projectRoot })
+    Object.defineProperty(provider, "mcpClient", {
+      configurable: true,
+      value: {
+        callTool: async (toolName: string, args: Record<string, unknown>) => {
+          if (toolName === "get_symbols_overview") {
+            return JSON.stringify({ Function: ["target"] })
+          }
+          if (toolName === "find_symbol") {
+            return JSON.stringify([
+              {
+                name: "target",
+                name_path: "target",
+                kind: "Function",
+                relative_path: "",
+                location: { relative_path: "", line: 0, column: 6 },
+                body_location: { start_line: 0, end_line: 0 },
+              },
+            ])
+          }
+          if (toolName === "find_referencing_symbols") {
+            return JSON.stringify({
+              "src/ref.ts": {
+                Function: [
+                  {
+                    name_path: "useTarget",
+                    kind: "Function",
+                    relative_path: "src/ref.ts",
+                    location: { relative_path: "src/ref.ts", line: 4, column: 10 },
+                    body_location: { start_line: 4, end_line: 6 },
+                  },
+                ],
+              },
+            })
+          }
+          return JSON.stringify([])
+        },
+      },
+    })
+
+    const references = await provider.findReferences({ filePath, line: 1, character: 8, includeDeclaration: true })
+
+    expect(references?.map((location) => location.uri)).toEqual([
+      pathToUri(`${projectRoot}/src/ref.ts`),
+    ])
+  })
 })
