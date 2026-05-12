@@ -110,4 +110,17 @@ describe("Serena declaration result shapes", () => {
       range: { start: { line: 3, character: 0 }, end: { line: 3, character: 0 } },
     })
   })
+
+  test("#given Serena returns plain-text error output #when finding a declaration #then it raises a stable non-JSON error", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "serena-declaration-"))
+    const filePath = await createUseFile(projectRoot)
+
+    await expect(
+      findSerenaDeclaration(
+        { projectRoot },
+        { filePath, line: 1, character: 1 },
+        async () => "Error: symbol lookup failed"
+      )
+    ).rejects.toThrow("Serena find_declaration returned non-JSON text: Error: symbol lookup failed")
+  })
 })

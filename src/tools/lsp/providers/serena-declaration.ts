@@ -4,9 +4,10 @@ import { pathToUri } from "../file-path-utils"
 
 import { createDeclarationQuery, createDeclarationRegex } from "./serena-declaration-query"
 import { preferRequestedToken } from "./serena-declaration-token-filter"
-import { convertToLocation, toAbsolutePath } from "./serena-symbol-formatters"
+import { getSelectionRange, toAbsolutePath } from "./serena-symbol-formatters"
+import { parseJsonResult } from "./serena-json-result"
 import type { SerenaLspProviderConfig, SerenaSymbol } from "./serena-symbol-types"
-import { parseJsonResult, toRelativePath } from "./serena-symbol-lookup"
+import { toRelativePath } from "./serena-symbol-lookup"
 import { filterDefinitionSymbols } from "./serena-definition-candidates"
 
 export { createDeclarationQuery, createDeclarationRegex }
@@ -48,15 +49,19 @@ function collectDeclarationSymbols(value: unknown, symbols: SerenaSymbol[]): voi
 }
 
 function normalizeDeclarationResult(result: unknown): SerenaSymbol[] {
-  const parsed = parseJsonResult<unknown>(result)
+  const parsed = parseJsonResult<unknown>(result, "Serena find_declaration")
   const symbols: SerenaSymbol[] = []
   collectDeclarationSymbols(parsed, symbols)
   return filterDefinitionSymbols(symbols)
 }
 
 function convertDeclarationToLocation(projectRoot: string, symbol: SerenaSymbol): Location | null {
-  if (symbol.location) {
-    return convertToLocation(projectRoot, symbol)
+  const locationRelativePath = symbol.location?.relative_path ?? symbol.relative_path
+  if (symbol.location && locationRelativePath) {
+    return {
+      uri: pathToUri(toAbsolutePath(projectRoot, locationRelativePath)),
+      range: getSelectionRange(symbol),
+    }
   }
 
   const relativePath = symbol.relative_path

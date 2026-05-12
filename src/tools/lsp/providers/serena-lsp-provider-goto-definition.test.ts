@@ -1,3 +1,5 @@
+/// <reference types="bun-types" />
+
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -15,9 +17,7 @@ describe("SerenaLspProvider gotoDefinition", () => {
     const filePath = join(sourceDirectory, "use.ts")
     await writeFile(filePath, "target()\n", "utf8")
     const calls: { toolName: string; args: Record<string, unknown> }[] = []
-    const provider = new SerenaLspProvider({ projectRoot }) as SerenaLspProvider & {
-      mcpClient: { callTool: (toolName: string, args: Record<string, unknown>) => Promise<unknown> }
-    }
+    const provider = new SerenaLspProvider({ projectRoot })
     Object.defineProperty(provider, "mcpClient", {
       configurable: true,
       value: {
@@ -45,5 +45,24 @@ describe("SerenaLspProvider gotoDefinition", () => {
         end: { line: 2, character: 0 },
       },
     })
+  })
+
+  test("#given Serena returns plain-text output #when gotoDefinition runs #then it surfaces a stable parsing error", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "serena-provider-definition-"))
+    const sourceDirectory = join(projectRoot, "src")
+    await mkdir(sourceDirectory, { recursive: true })
+    const filePath = join(sourceDirectory, "use.ts")
+    await writeFile(filePath, "target()\n", "utf8")
+    const provider = new SerenaLspProvider({ projectRoot })
+    Object.defineProperty(provider, "mcpClient", {
+      configurable: true,
+      value: {
+        callTool: async () => "Error: declaration lookup failed",
+      },
+    })
+
+    await expect(provider.gotoDefinition({ filePath, line: 1, character: 1 })).rejects.toThrow(
+      "Serena find_declaration returned non-JSON text: Error: declaration lookup failed"
+    )
   })
 })
