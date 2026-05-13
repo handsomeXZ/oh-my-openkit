@@ -4,6 +4,7 @@ import { mock } from "bun:test"
 import { randomUUID } from "node:crypto"
 
 import type { ToolContext } from "@opencode-ai/plugin/tool"
+import { Effect } from "effect"
 
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"
@@ -31,7 +32,7 @@ export function createToolContext(sessionID: string): ToolContext {
     worktree: "/project",
     abort: new AbortController().signal,
     metadata: () => {},
-    ask: async () => undefined,
+    ask: () => Effect.void,
   }
 }
 
