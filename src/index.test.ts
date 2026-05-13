@@ -4,6 +4,7 @@ const mockInitConfigContext = mock(() => {})
 const mockDetectExternalSkillPlugin = mock(() => ({ detected: false, pluginName: null }))
 const mockGetSkillPluginConflictWarning = mock(() => "")
 const mockInjectServerAuthIntoClient = mock(() => {})
+const mockGetServerBasicAuthHeader = mock(() => undefined)
 const mockLogLegacyPluginStartupWarning = mock(() => {})
 const mockLoadPluginConfig = mock(() => ({}))
 const mockIsTmuxIntegrationEnabled = mock(
@@ -21,6 +22,10 @@ const mockCreateRuntimeTmuxConfig = mock(() => ({
 const mockCreateManagers = mock(() => ({
   backgroundManager: { shutdown: async () => {} },
   skillMcpManager: { disconnectAll: async () => {} },
+  serenaServiceManager: {
+    start: mock(() => {}),
+    dispose: async () => {},
+  },
   configHandler: async () => {},
 }))
 const mockCreateTools = mock(async () => ({
@@ -52,10 +57,17 @@ function installIndexModuleMocks(): void {
     getSkillPluginConflictWarning: mockGetSkillPluginConflictWarning,
   }))
 
-  mock.module("./shared", () => ({
-    injectServerAuthIntoClient: mockInjectServerAuthIntoClient,
+  mock.module("./shared/logger", () => ({
     log: mock(() => {}),
+  }))
+
+  mock.module("./shared/log-legacy-plugin-startup-warning", () => ({
     logLegacyPluginStartupWarning: mockLogLegacyPluginStartupWarning,
+  }))
+
+  mock.module("./shared/opencode-server-auth", () => ({
+    getServerBasicAuthHeader: mockGetServerBasicAuthHeader,
+    injectServerAuthIntoClient: mockInjectServerAuthIntoClient,
   }))
 
   mock.module("./plugin-config", () => ({
@@ -111,6 +123,12 @@ function installIndexModuleMocks(): void {
     startBackgroundCheck: mockStartTmuxCheck,
   }))
 
+  mock.module("./tools", () => ({
+    lspManager: {
+      stopAll: async () => {},
+    },
+  }))
+
 }
 
 async function importFreshIndexModule(): Promise<typeof import("./index")> {
@@ -126,6 +144,7 @@ describe("oh-my-openagent plugin module", () => {
     mockDetectExternalSkillPlugin.mockClear()
     mockGetSkillPluginConflictWarning.mockClear()
     mockInjectServerAuthIntoClient.mockClear()
+    mockGetServerBasicAuthHeader.mockClear()
     mockLogLegacyPluginStartupWarning.mockClear()
     mockLoadPluginConfig.mockClear()
     mockIsTmuxIntegrationEnabled.mockClear()

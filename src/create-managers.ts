@@ -7,6 +7,7 @@ import { BackgroundManager } from "./features/background-agent"
 import { initLspProgressToastManager } from "./features/lsp-progress-toast/manager"
 import { createSerenaLifecycleToastListener, SerenaServiceManager } from "./features/serena-service"
 import { SkillMcpManager } from "./features/skill-mcp-manager"
+import { cleanupSessionTeamRuns } from "./features/team-mode/team-runtime/session-cleanup"
 import { createModelFallbackControllerAccessor } from "./hooks/model-fallback"
 import { initTaskToastManager } from "./features/task-toast-manager"
 import { TmuxSessionManager } from "./features/tmux-subagent"
@@ -25,6 +26,7 @@ type CreateManagersDeps = {
   initLspProgressToastManagerFn: typeof initLspProgressToastManager
   initTaskToastManagerFn: typeof initTaskToastManager
   registerManagerForCleanupFn: typeof registerManagerForCleanup
+  cleanupSessionTeamRunsFn: typeof cleanupSessionTeamRuns
   createConfigHandlerFn: typeof createConfigHandler
   markServerRunningInProcessFn: typeof markServerRunningInProcess
 }
@@ -37,6 +39,7 @@ const defaultCreateManagersDeps: CreateManagersDeps = {
   initLspProgressToastManagerFn: initLspProgressToastManager,
   initTaskToastManagerFn: initTaskToastManager,
   registerManagerForCleanupFn: registerManagerForCleanup,
+  cleanupSessionTeamRunsFn: cleanupSessionTeamRuns,
   createConfigHandlerFn: createConfigHandler,
   markServerRunningInProcessFn: markServerRunningInProcess,
 }
@@ -66,16 +69,32 @@ export function createManagers(args: {
   }
   const tmuxSessionManager = new deps.TmuxSessionManagerClass(ctx, tmuxConfig)
   const modelFallbackControllerAccessor = createModelFallbackControllerAccessor()
+  let backgroundManager: BackgroundManager | undefined
+
+  const cleanupTeamModeRuns = async (): Promise<void> => {
+    if (!pluginConfig.team_mode?.enabled) return
+    const report = await deps.cleanupSessionTeamRunsFn({
+      config: pluginConfig.team_mode,
+      tmuxMgr: tmuxSessionManager,
+      bgMgr: backgroundManager,
+    })
+    if (report.cleanedTeamRunIds.length > 0 || report.errors.length > 0) {
+      log("[create-managers] team-mode session cleanup complete", report)
+    }
+  }
 
   deps.registerManagerForCleanupFn({
     shutdown: async () => {
+      await cleanupTeamModeRuns().catch((error) => {
+        log("[create-managers] team-mode cleanup error during process shutdown:", error)
+      })
       await tmuxSessionManager.cleanup().catch((error) => {
         log("[create-managers] tmux cleanup error during process shutdown:", error)
       })
     },
   })
 
-  const backgroundManager = new deps.BackgroundManagerClass({
+  backgroundManager = new deps.BackgroundManagerClass({
     pluginContext: ctx,
     config: pluginConfig.background_task,
     tmuxConfig,
@@ -112,6 +131,9 @@ export function createManagers(args: {
         log("[create-managers] onSubagentSessionCreated callback completed")
     },
     onShutdown: async () => {
+      await cleanupTeamModeRuns().catch((error) => {
+        log("[create-managers] team-mode cleanup error during shutdown:", error)
+      })
       await tmuxSessionManager.cleanup().catch((error) => {
         log("[create-managers] tmux cleanup error during shutdown:", error)
       })

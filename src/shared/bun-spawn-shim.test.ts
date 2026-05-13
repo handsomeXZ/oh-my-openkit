@@ -70,7 +70,7 @@ describe("bun-spawn-shim", () => {
   })
 
   test("#given default stdio #when child reads stdin #then it does not hang waiting for input", async () => {
-    const proc = spawn(["cat"], { stdout: "pipe", stderr: "pipe" })
+    const proc = spawn(["bun", "--eval", "await Bun.stdin.text()"], { stdout: "pipe", stderr: "pipe" })
 
     const exitCode = await proc.exited
 

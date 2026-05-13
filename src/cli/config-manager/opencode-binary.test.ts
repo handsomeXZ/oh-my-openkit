@@ -4,22 +4,31 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test"
 
 import * as configContext from "./config-context"
 import * as spawnHelpers from "../../shared/spawn-with-windows-hide"
+import { unsafeTestValue } from "../../../test-support/unsafe-test-value"
 
 type OpenCodeBinaryModule = typeof import("./opencode-binary")
 
 type CreateProcOptions = {
   exitCode?: number | null
-  output?: { stdout?: string; stderr?: string }
+  exited?: Promise<number>
+  output?: {
+    stdout?: string
+    stdoutStream?: ReadableStream<Uint8Array>
+    stderr?: string
+  }
+  kill?: (signal?: NodeJS.Signals) => void
 }
 
 function createProc(options: CreateProcOptions = {}): ReturnType<typeof spawnHelpers.spawnWithWindowsHide> {
   const exitCode = options.exitCode ?? 0
   return {
-    exited: Promise.resolve(exitCode),
+    exited: options.exited ?? Promise.resolve(exitCode),
     exitCode,
-    stdout: options.output?.stdout !== undefined ? new Blob([options.output.stdout]).stream() : undefined,
+    stdout:
+      options.output?.stdoutStream ??
+      (options.output?.stdout !== undefined ? new Blob([options.output.stdout]).stream() : undefined),
     stderr: options.output?.stderr !== undefined ? new Blob([options.output.stderr]).stream() : undefined,
-    kill: () => {},
+    kill: options.kill ?? (() => {}),
   } satisfies ReturnType<typeof spawnHelpers.spawnWithWindowsHide>
 }
 
@@ -68,6 +77,82 @@ describe("getOpenCodeVersion (installer)", () => {
       const result = await getOpenCodeVersion()
 
       expect(result).toBe("custom-build")
+    })
+  })
+
+  describe("#given timeout path #when getOpenCodeVersion #then sends SIGTERM and SIGKILL and returns null without hanging", () => {
+    it("bounds process lifetime on hung --version", async () => {
+      const killCalls: Array<NodeJS.Signals | undefined> = []
+      spawnSpy.mockReturnValue(
+        createProc({
+          exited: new Promise<number>(() => {}),
+          output: { stdout: "" },
+          kill: (signal?: NodeJS.Signals) => {
+            killCalls.push(signal)
+          },
+        }),
+      )
+
+      const immediateSetTimeout = unsafeTestValue<typeof globalThis.setTimeout>(((handler: TimerHandler) => {
+        if (typeof handler === "function") {
+          handler()
+        }
+        return unsafeTestValue<ReturnType<typeof setTimeout>>(1)
+      }))
+      const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(immediateSetTimeout)
+
+      const result = await getOpenCodeVersion()
+
+      expect(result).toBe(null)
+      expect(killCalls).toEqual(["SIGTERM", "SIGKILL"])
+
+      setTimeoutSpy.mockRestore()
+    })
+  })
+
+  describe("#given never-closing stdout after kill #when getOpenCodeVersion #then returns within bounded time", () => {
+    it("bounds outputPromise wait and returns null", async () => {
+      const neverClosingStdout = new ReadableStream<Uint8Array>({
+        start() {
+          // Intentionally never closing to simulate a hung stdout stream.
+        },
+      })
+      spawnSpy.mockReturnValue(
+        createProc({
+          exited: new Promise<number>(() => {}),
+          output: { stdoutStream: neverClosingStdout },
+          kill: () => {},
+        }),
+      )
+
+      const immediateSetTimeout = unsafeTestValue<typeof globalThis.setTimeout>(((handler: TimerHandler) => {
+        if (typeof handler === "function") {
+          handler()
+        }
+        return unsafeTestValue<ReturnType<typeof setTimeout>>(1)
+      }))
+      const setTimeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(immediateSetTimeout)
+
+      const result = await getOpenCodeVersion()
+
+      expect(result).toBe(null)
+
+      setTimeoutSpy.mockRestore()
+    })
+  })
+
+  describe("#given quick successful exit #when getOpenCodeVersion #then clears active timers", () => {
+    it("avoids timer leaks after success", async () => {
+      spawnSpy.mockReturnValue(createProc({ output: { stdout: "1.14.33\n" } }))
+
+      const clearTimeoutSpy = spyOn(globalThis, "clearTimeout")
+
+      const result = await getOpenCodeVersion()
+
+      expect(result).toBe("1.14.33")
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(2)
+
+      clearTimeoutSpy.mockRestore()
     })
   })
 

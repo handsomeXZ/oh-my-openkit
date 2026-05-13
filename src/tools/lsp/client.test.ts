@@ -14,6 +14,7 @@ mock.module("vscode-jsonrpc/node", () => ({
 
 import { LSPClient, lspManager, validateCwd } from "./client"
 import type { ResolvedServer } from "./types"
+import { unsafeTestValue } from "../../../test-support/unsafe-test-value"
 
 describe("LSPClient", () => {
   beforeEach(async () => {
@@ -34,7 +35,7 @@ describe("LSPClient", () => {
       const originalSetTimeout = globalThis.setTimeout
       globalThis.setTimeout = ((fn: (...args: unknown[]) => void, _ms?: number) => {
         fn()
-        return 0 as unknown as ReturnType<typeof setTimeout>
+        return unsafeTestValue<ReturnType<typeof setTimeout>>(0)
       }) as typeof setTimeout
 
       const server: ResolvedServer = {
@@ -48,7 +49,7 @@ describe("LSPClient", () => {
 
       // Stub protocol output: we only want to assert notifications.
       const sendNotificationSpy = spyOn(
-        client as unknown as { sendNotification: (m: string, p?: unknown) => void },
+        unsafeTestValue<{ sendNotification: (m: string, p?: unknown) => void }>(client),
         "sendNotification"
       )
 
