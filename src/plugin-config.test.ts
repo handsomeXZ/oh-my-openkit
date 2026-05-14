@@ -427,6 +427,30 @@ describe("loadConfigFromPath agent_order warnings", () => {
     expect(getConfigLoadErrors()).toEqual([])
   })
 
+  it("pins sisyphus second even when agent_order tries to move it later", () => {
+    // given
+    const rootDir = mkdtempSync(join(tmpdir(), "agent-order-sisyphus-pinned-"))
+    tempDirs.push(rootDir)
+    const configPath = join(rootDir, "oh-my-openagent.json")
+    writeJsonFile(configPath, {
+      agent_order: ["build", "hephaestus", "prometheus", "atlas", "sisyphus", "plan"],
+    })
+
+    // when
+    const result = loadConfigFromPath(configPath, {})
+
+    // then
+    expect(result?.agent_order).toEqual([
+      "build",
+      "hephaestus",
+      "prometheus",
+      "atlas",
+      "sisyphus",
+      "plan",
+    ])
+    expect(getConfigLoadErrors()).toEqual([])
+  })
+
   it("sanitizes and caps invalid agent_order values before recording warnings", () => {
     // given
     const rootDir = mkdtempSync(join(tmpdir(), "agent-order-sanitize-"))

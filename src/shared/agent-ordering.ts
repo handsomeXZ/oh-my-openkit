@@ -9,6 +9,9 @@ export const DEFAULT_AGENT_ORDER = [
   "plan",
 ] as const
 
+const PINNED_AGENT_ORDER = ["build", "sisyphus"] as const
+const TRAILING_AGENT_ORDER = ["plan"] as const
+
 export type AgentOrderValidation = {
   order: string[]
   invalid: string[]
@@ -29,6 +32,11 @@ export function validateAgentOrder(agentOrder: readonly string[] | undefined): A
   const duplicates: string[] = []
   const seen = new Set<string>()
 
+  for (const configKey of PINNED_AGENT_ORDER) {
+    seen.add(configKey)
+    order.push(configKey)
+  }
+
   for (const rawName of agentOrder ?? []) {
     const trimmed = rawName.trim()
     if (trimmed.length === 0) {
@@ -39,6 +47,14 @@ export function validateAgentOrder(agentOrder: readonly string[] | undefined): A
     const configKey = getAgentConfigKey(trimmed)
     if (!KNOWN_AGENT_KEYS.has(configKey)) {
       invalid.push(rawName)
+      continue
+    }
+
+     if (PINNED_AGENT_ORDER.includes(configKey as (typeof PINNED_AGENT_ORDER)[number])) {
+      continue
+    }
+
+    if (TRAILING_AGENT_ORDER.includes(configKey as (typeof TRAILING_AGENT_ORDER)[number])) {
       continue
     }
 
@@ -53,6 +69,13 @@ export function validateAgentOrder(agentOrder: readonly string[] | undefined): A
 
   for (const configKey of DEFAULT_AGENT_ORDER) {
     appendUnique(order, configKey)
+  }
+
+  for (const configKey of TRAILING_AGENT_ORDER) {
+    if (order.includes(configKey)) {
+      continue
+    }
+    order.push(configKey)
   }
 
   return { order, invalid, duplicates }
