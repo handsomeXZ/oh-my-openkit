@@ -238,7 +238,7 @@ describe("applyAgentConfig builtin override protection", () => {
     })
 
     // then
-    expect(config.default_agent).toBe(getAgentDisplayName("sisyphus"))
+    expect(config.default_agent).toBe("build")
   })
 
   test("resolved default_agent contains no zero-width invisible characters", async () => {
@@ -517,6 +517,47 @@ describe("applyAgentConfig builtin override protection", () => {
         expect.objectContaining({ name: "global-agent-skill" }),
       ]),
     )
+  })
+
+  test("preserves native build and plan agents when Sisyphus orchestration is enabled", async () => {
+    // given
+    const config = createBaseConfig()
+    config.agent = {
+      build: {
+        mode: "primary",
+        description: "Native Build",
+      },
+      plan: {
+        mode: "primary",
+        description: "Native Plan",
+      },
+    }
+    const pluginConfig = createPluginConfig()
+    pluginConfig.sisyphus_agent = {
+      planner_enabled: true,
+      replace_plan: true,
+    }
+
+    // when
+    const result = await applyAgentConfig({
+      config,
+      pluginConfig,
+      ctx: { directory: "/tmp" },
+      pluginComponents: createPluginComponents(),
+    })
+
+    // then
+    expect(result.build).toMatchObject({
+      mode: "primary",
+      description: "Native Build",
+    })
+    expect(result.plan).toMatchObject({
+      mode: "primary",
+      description: "Native Plan",
+    })
+    expect(config.default_agent).toBe("build")
+    expect(Object.keys(result).slice(0, 2)).toEqual(["build", "plan"])
+    expect(result[getAgentDisplayName("prometheus")]).toBeDefined()
   })
 
   describe("agent_definitions and opencode.json integration", () => {

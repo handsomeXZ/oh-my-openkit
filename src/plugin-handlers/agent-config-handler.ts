@@ -34,7 +34,6 @@ import {
   filterProtectedAgentOverrides,
 } from "./agent-override-protection";
 import { buildPrometheusAgentConfig } from "./prometheus-agent-config-builder";
-import { buildPlanDemoteConfig } from "./plan-model-inheritance";
 
 type AgentConfigRecord = Record<string, Record<string, unknown> | undefined> & {
   build?: Record<string, unknown>;
@@ -188,8 +187,6 @@ export async function applyAgentConfig(params: {
   const builderEnabled =
     params.pluginConfig.sisyphus_agent?.default_builder_enabled ?? false;
   const plannerEnabled = params.pluginConfig.sisyphus_agent?.planner_enabled ?? true;
-  const replacePlan = params.pluginConfig.sisyphus_agent?.replace_plan ?? true;
-  const shouldDemotePlan = plannerEnabled && replacePlan;
   const configuredDefaultAgent = getConfiguredDefaultAgent(params.config);
 
   if (isSisyphusEnabled && builtinAgents.sisyphus) {
@@ -199,8 +196,7 @@ export async function applyAgentConfig(params: {
       (params.config as { default_agent?: string }).default_agent =
         getAgentDisplayName(runtimeConfigKey);
     } else {
-      (params.config as { default_agent?: string }).default_agent =
-        getAgentDisplayName("sisyphus");
+      (params.config as { default_agent?: string }).default_agent = "build";
     }
 
     // Assembly order: Sisyphus -> Hephaestus -> Prometheus -> Atlas
@@ -254,8 +250,6 @@ export async function applyAgentConfig(params: {
       ? Object.fromEntries(
           Object.entries(configAgent)
             .filter(([key]) => {
-              if (key === "build") return false;
-              if (key === "plan" && shouldDemotePlan) return false;
               if (key in builtinAgents) return false;
               return true;
             })
@@ -267,17 +261,6 @@ export async function applyAgentConfig(params: {
             }),
         )
       : {};
-
-    const migratedBuild = configAgent?.build
-      ? migrateAgentConfig(configAgent.build as Record<string, unknown>)
-      : {};
-
-    const planDemoteConfig = shouldDemotePlan
-      ? buildPlanDemoteConfig(
-          agentConfig["prometheus"] as Record<string, unknown> | undefined,
-          params.pluginConfig.agents?.plan as Record<string, unknown> | undefined,
-        )
-      : undefined;
 
     const protectedBuiltinAgentNames = createProtectedAgentNameSet([
       ...Object.keys(agentConfig),
@@ -328,8 +311,6 @@ export async function applyAgentConfig(params: {
       ...filterDisabledAgents(filteredAgentDefinitionAgents),
       ...filterDisabledAgents(filteredOpencodeConfigAgents),
       ...filteredConfigAgents,
-      build: { ...migratedBuild, mode: "subagent", hidden: true },
-      ...(planDemoteConfig ? { plan: planDemoteConfig } : {}),
     };
   } else {
     const protectedBuiltinAgentNames = createProtectedAgentNameSet(
