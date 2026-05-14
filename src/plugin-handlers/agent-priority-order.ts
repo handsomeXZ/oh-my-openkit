@@ -1,7 +1,5 @@
 import { DEFAULT_AGENT_ORDER, resolveAgentOrderDisplayNames } from "../shared/agent-ordering"
 
-const NATIVE_OPENCODE_AGENT_ORDER = ["build", "plan"] as const
-
 /**
  * Default source of truth for core agent ordering.
  * The default order is: sisyphus → hephaestus → prometheus → atlas.
@@ -27,23 +25,12 @@ export function reorderAgentsByPriority(
 ): Record<string, unknown> {
   const ordered: Record<string, unknown> = {}
   const seen = new Set<string>()
-  let nextOrder = 1
-
-  for (const nativeAgentName of NATIVE_OPENCODE_AGENT_ORDER) {
-    if (Object.prototype.hasOwnProperty.call(agents, nativeAgentName)) {
-      ordered[nativeAgentName] = injectOrderField(agents[nativeAgentName], nextOrder)
-      seen.add(nativeAgentName)
-      nextOrder += 1
-    }
-  }
-
   const orderedDisplayNames = resolveAgentOrderDisplayNames(agentOrder)
 
-  for (const displayName of orderedDisplayNames) {
+  for (const [index, displayName] of orderedDisplayNames.entries()) {
     if (Object.prototype.hasOwnProperty.call(agents, displayName)) {
-      ordered[displayName] = injectOrderField(agents[displayName], nextOrder)
+      ordered[displayName] = injectOrderField(agents[displayName], index + 1)
       seen.add(displayName)
-      nextOrder += 1
     }
   }
 

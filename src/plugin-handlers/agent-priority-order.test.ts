@@ -18,19 +18,21 @@ describe("agent-priority-order", () => {
       expect(Array.isArray(CANONICAL_CORE_AGENT_ORDER)).toBe(true)
     })
 
-    test("canonical order is exactly [sisyphus, hephaestus, prometheus, atlas]", () => {
+    test("canonical order is exactly [build, sisyphus, hephaestus, prometheus, atlas, plan]", () => {
       // then
       expect(CANONICAL_CORE_AGENT_ORDER).toEqual([
+        "build",
         "sisyphus",
         "hephaestus",
         "prometheus",
         "atlas",
+        "plan",
       ])
     })
 
-    test("canonical order length is exactly 4", () => {
+    test("canonical order length is exactly 6", () => {
       // then
-      expect(CANONICAL_CORE_AGENT_ORDER).toHaveLength(4)
+      expect(CANONICAL_CORE_AGENT_ORDER).toHaveLength(6)
     })
   })
 
@@ -47,13 +49,15 @@ describe("agent-priority-order", () => {
     const explore = getAgentDisplayName("explore")
 
     describe("#given agents in random order", () => {
-      test("#when all core agents present #then orders as sisyphus→hephaestus→prometheus→atlas", () => {
+      test("#when all core agents present #then orders as build→sisyphus→hephaestus→prometheus→atlas→plan", () => {
         // given: agents in reverse order
         const agents: Record<string, unknown> = {
+          [plan]: { name: "plan" },
           [atlas]: { name: "atlas" },
           [prometheus]: { name: "prometheus" },
           [hephaestus]: { name: "hephaestus" },
           [sisyphus]: { name: "sisyphus" },
+          [build]: { name: "build" },
         }
 
         // when
@@ -61,31 +65,37 @@ describe("agent-priority-order", () => {
 
         // then
         const keys = Object.keys(result)
-        expect(keys[0]).toBe(sisyphus)
-        expect(keys[1]).toBe(hephaestus)
-        expect(keys[2]).toBe(prometheus)
-        expect(keys[3]).toBe(atlas)
+        expect(keys[0]).toBe(build)
+        expect(keys[1]).toBe(sisyphus)
+        expect(keys[2]).toBe(hephaestus)
+        expect(keys[3]).toBe(prometheus)
+        expect(keys[4]).toBe(atlas)
+        expect(keys[5]).toBe(plan)
       })
 
-      test("#when custom agent order is provided #then follows configured core ordering", () => {
+      test("#when custom agent order is provided #then build stays first and plan stays last", () => {
         // given
         const agents: Record<string, unknown> = {
+          [plan]: { name: "plan" },
           [atlas]: { name: "atlas" },
           [prometheus]: { name: "prometheus" },
           [hephaestus]: { name: "hephaestus" },
           [sisyphus]: { name: "sisyphus" },
+          [build]: { name: "build" },
         }
 
         // when
         const result = reorderAgentsByPriority(agents, [
+          "build",
           "hephaestus",
           "sisyphus",
           "prometheus",
           "atlas",
+          "plan",
         ])
 
         // then
-        expect(Object.keys(result)).toEqual([hephaestus, sisyphus, prometheus, atlas])
+        expect(Object.keys(result)).toEqual([build, hephaestus, sisyphus, prometheus, atlas, plan])
       })
 
       test("#when custom agent order contains invalid entries #then ignores them and keeps valid/default ordering", () => {
@@ -100,9 +110,11 @@ describe("agent-priority-order", () => {
         // when
         const result = reorderAgentsByPriority(agents, [
           "not-real",
+          "build",
           "atlas",
           "hephaestus",
           "atlas",
+          "plan",
         ])
 
         // then
@@ -113,6 +125,7 @@ describe("agent-priority-order", () => {
         // given: mixed order with non-core agents interleaved
         const agents: Record<string, unknown> = {
           [oracle]: { name: "oracle" },
+          [build]: { name: "build" },
           [atlas]: { name: "atlas" },
           [librarian]: { name: "librarian" },
           [prometheus]: { name: "prometheus" },
@@ -120,6 +133,7 @@ describe("agent-priority-order", () => {
           [hephaestus]: { name: "hephaestus" },
           custom: { name: "custom" },
           [sisyphus]: { name: "sisyphus" },
+          [plan]: { name: "plan" },
         }
 
         // when
@@ -127,32 +141,7 @@ describe("agent-priority-order", () => {
 
         // then
         const keys = Object.keys(result)
-        expect(keys.slice(0, 4)).toEqual([sisyphus, hephaestus, prometheus, atlas])
-      })
-
-      test("#when native build and plan agents are present #then they stay ahead of delegated core agents", () => {
-        // given
-        const agents: Record<string, unknown> = {
-          [atlas]: { name: "atlas" },
-          [plan]: { name: "plan" },
-          [prometheus]: { name: "prometheus" },
-          [build]: { name: "build" },
-          [hephaestus]: { name: "hephaestus" },
-          [sisyphus]: { name: "sisyphus" },
-        }
-
-        // when
-        const result = reorderAgentsByPriority(agents)
-
-        // then
-        expect(Object.keys(result).slice(0, 6)).toEqual([
-          build,
-          plan,
-          sisyphus,
-          hephaestus,
-          prometheus,
-          atlas,
-        ])
+        expect(keys.slice(0, 6)).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan])
       })
     })
 
@@ -160,10 +149,12 @@ describe("agent-priority-order", () => {
       test("#when reordered #then result is ALWAYS identical", () => {
         // given: base agent config
         const baseAgents = {
+          [build]: { name: "build" },
           [sisyphus]: { name: "sisyphus" },
           [hephaestus]: { name: "hephaestus" },
           [prometheus]: { name: "prometheus" },
           [atlas]: { name: "atlas" },
+          [plan]: { name: "plan" },
           [oracle]: { name: "oracle" },
           [librarian]: { name: "librarian" },
           custom1: { name: "custom1" },
@@ -198,23 +189,27 @@ describe("agent-priority-order", () => {
           expect(results[i]).toEqual(firstResult)
         }
 
-        // then: core agents are always first 4 in canonical order
-        expect(firstResult.slice(0, 4)).toEqual([
+        // then: ranked agents are always first in canonical order
+        expect(firstResult.slice(0, 6)).toEqual([
+          build,
           sisyphus,
           hephaestus,
           prometheus,
           atlas,
+          plan,
         ])
       })
     })
 
     describe("#given partial core agents", () => {
-      test("#when only sisyphus and atlas present #then orders as sisyphus→atlas", () => {
+      test("#when build, sisyphus, atlas, and plan are present #then build stays first and plan stays last", () => {
         // given
         const agents: Record<string, unknown> = {
+          [plan]: { name: "plan" },
           [atlas]: { name: "atlas" },
           custom: { name: "custom" },
           [sisyphus]: { name: "sisyphus" },
+          [build]: { name: "build" },
         }
 
         // when
@@ -222,18 +217,23 @@ describe("agent-priority-order", () => {
 
         // then
         const keys = Object.keys(result)
+        expect(keys[0]).toBe(build)
         const sisyphusIdx = keys.indexOf(sisyphus)
         const atlasIdx = keys.indexOf(atlas)
+        const planIdx = keys.indexOf(plan)
         expect(sisyphusIdx).toBeLessThan(atlasIdx)
-        expect(sisyphusIdx).toBe(0)
+        expect(sisyphusIdx).toBe(1)
+        expect(planIdx).toBe(3)
       })
 
-      test("#when only hephaestus and prometheus present #then orders as hephaestus→prometheus", () => {
+      test("#when build, hephaestus, prometheus, and plan are present #then build stays first and plan stays last", () => {
         // given
         const agents: Record<string, unknown> = {
+          [plan]: { name: "plan" },
           [prometheus]: { name: "prometheus" },
           custom: { name: "custom" },
           [hephaestus]: { name: "hephaestus" },
+          [build]: { name: "build" },
         }
 
         // when
@@ -241,10 +241,13 @@ describe("agent-priority-order", () => {
 
         // then
         const keys = Object.keys(result)
+        expect(keys[0]).toBe(build)
         const hephaestusIdx = keys.indexOf(hephaestus)
         const prometheusIdx = keys.indexOf(prometheus)
+        const planIdx = keys.indexOf(plan)
         expect(hephaestusIdx).toBeLessThan(prometheusIdx)
-        expect(hephaestusIdx).toBe(0)
+        expect(hephaestusIdx).toBe(1)
+        expect(planIdx).toBe(3)
       })
     })
 
@@ -252,44 +255,12 @@ describe("agent-priority-order", () => {
       test("#when core agent is object #then injects order field", () => {
         // given
         const agents: Record<string, unknown> = {
+          [build]: { name: "build", mode: "primary" },
           [sisyphus]: { name: "sisyphus", mode: "primary" },
           [hephaestus]: { name: "hephaestus", mode: "primary" },
           [prometheus]: { name: "prometheus", mode: "primary" },
           [atlas]: { name: "atlas", mode: "primary" },
-        }
-
-        // when
-        const result = reorderAgentsByPriority(agents)
-
-        // then
-        expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 1 })
-        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 2 })
-        expect(result[prometheus]).toEqual({ name: "prometheus", mode: "primary", order: 3 })
-        expect(result[atlas]).toEqual({ name: "atlas", mode: "primary", order: 4 })
-      })
-
-      test("#when custom agent order is provided #then injects matching order fields", () => {
-        // given
-        const agents: Record<string, unknown> = {
-          [sisyphus]: { name: "sisyphus", mode: "primary" },
-          [hephaestus]: { name: "hephaestus", mode: "primary" },
-        }
-
-        // when
-        const result = reorderAgentsByPriority(agents, ["hephaestus", "sisyphus"])
-
-        // then
-        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 1 })
-        expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 2 })
-      })
-
-      test("#when native build and plan agents are present #then order fields reserve the first two slots", () => {
-        // given
-        const agents: Record<string, unknown> = {
-          [build]: { name: "build", mode: "primary" },
           [plan]: { name: "plan", mode: "primary" },
-          [sisyphus]: { name: "sisyphus", mode: "primary" },
-          [hephaestus]: { name: "hephaestus", mode: "primary" },
         }
 
         // when
@@ -297,9 +268,30 @@ describe("agent-priority-order", () => {
 
         // then
         expect(result[build]).toEqual({ name: "build", mode: "primary", order: 1 })
-        expect(result[plan]).toEqual({ name: "plan", mode: "primary", order: 2 })
+        expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 2 })
+        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 3 })
+        expect(result[prometheus]).toEqual({ name: "prometheus", mode: "primary", order: 4 })
+        expect(result[atlas]).toEqual({ name: "atlas", mode: "primary", order: 5 })
+        expect(result[plan]).toEqual({ name: "plan", mode: "primary", order: 6 })
+      })
+
+      test("#when custom agent order is provided #then build stays first and plan stays last in order fields", () => {
+        // given
+        const agents: Record<string, unknown> = {
+          [build]: { name: "build", mode: "primary" },
+          [sisyphus]: { name: "sisyphus", mode: "primary" },
+          [hephaestus]: { name: "hephaestus", mode: "primary" },
+          [plan]: { name: "plan", mode: "primary" },
+        }
+
+        // when
+        const result = reorderAgentsByPriority(agents, ["build", "hephaestus", "sisyphus", "plan"])
+
+        // then
+        expect(result[build]).toEqual({ name: "build", mode: "primary", order: 1 })
+        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 2 })
         expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 3 })
-        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 4 })
+        expect(result[plan]).toEqual({ name: "plan", mode: "primary", order: 4 })
       })
 
       test("#when core agent is non-object #then leaves value unchanged", () => {
