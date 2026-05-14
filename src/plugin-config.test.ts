@@ -403,6 +403,30 @@ describe("loadConfigFromPath agent_order warnings", () => {
     ])
   })
 
+  it("accepts build first and plan last in agent_order without warnings", () => {
+    // given
+    const rootDir = mkdtempSync(join(tmpdir(), "agent-order-native-"))
+    tempDirs.push(rootDir)
+    const configPath = join(rootDir, "oh-my-openagent.json")
+    writeJsonFile(configPath, {
+      agent_order: ["build", "sisyphus", "hephaestus", "prometheus", "atlas", "plan"],
+    })
+
+    // when
+    const result = loadConfigFromPath(configPath, {})
+
+    // then
+    expect(result?.agent_order).toEqual([
+      "build",
+      "sisyphus",
+      "hephaestus",
+      "prometheus",
+      "atlas",
+      "plan",
+    ])
+    expect(getConfigLoadErrors()).toEqual([])
+  })
+
   it("sanitizes and caps invalid agent_order values before recording warnings", () => {
     // given
     const rootDir = mkdtempSync(join(tmpdir(), "agent-order-sanitize-"))
