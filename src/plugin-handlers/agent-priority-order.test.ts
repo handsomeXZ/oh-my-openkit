@@ -36,6 +36,8 @@ describe("agent-priority-order", () => {
 
   describe("reorderAgentsByPriority", () => {
     // given: display names for all core agents
+    const build = getAgentListDisplayName("build")
+    const plan = getAgentListDisplayName("plan")
     const sisyphus = getAgentListDisplayName("sisyphus")
     const hephaestus = getAgentListDisplayName("hephaestus")
     const prometheus = getAgentListDisplayName("prometheus")
@@ -126,6 +128,31 @@ describe("agent-priority-order", () => {
         // then
         const keys = Object.keys(result)
         expect(keys.slice(0, 4)).toEqual([sisyphus, hephaestus, prometheus, atlas])
+      })
+
+      test("#when native build and plan agents are present #then they stay ahead of delegated core agents", () => {
+        // given
+        const agents: Record<string, unknown> = {
+          [atlas]: { name: "atlas" },
+          [plan]: { name: "plan" },
+          [prometheus]: { name: "prometheus" },
+          [build]: { name: "build" },
+          [hephaestus]: { name: "hephaestus" },
+          [sisyphus]: { name: "sisyphus" },
+        }
+
+        // when
+        const result = reorderAgentsByPriority(agents)
+
+        // then
+        expect(Object.keys(result).slice(0, 6)).toEqual([
+          build,
+          plan,
+          sisyphus,
+          hephaestus,
+          prometheus,
+          atlas,
+        ])
       })
     })
 
@@ -254,6 +281,25 @@ describe("agent-priority-order", () => {
         // then
         expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 1 })
         expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 2 })
+      })
+
+      test("#when native build and plan agents are present #then order fields reserve the first two slots", () => {
+        // given
+        const agents: Record<string, unknown> = {
+          [build]: { name: "build", mode: "primary" },
+          [plan]: { name: "plan", mode: "primary" },
+          [sisyphus]: { name: "sisyphus", mode: "primary" },
+          [hephaestus]: { name: "hephaestus", mode: "primary" },
+        }
+
+        // when
+        const result = reorderAgentsByPriority(agents)
+
+        // then
+        expect(result[build]).toEqual({ name: "build", mode: "primary", order: 1 })
+        expect(result[plan]).toEqual({ name: "plan", mode: "primary", order: 2 })
+        expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 3 })
+        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 4 })
       })
 
       test("#when core agent is non-object #then leaves value unchanged", () => {
