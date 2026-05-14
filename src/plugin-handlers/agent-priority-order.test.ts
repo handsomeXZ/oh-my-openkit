@@ -73,7 +73,7 @@ describe("agent-priority-order", () => {
         expect(keys[5]).toBe(plan)
       })
 
-      test("#when custom agent order is provided #then build stays first and plan stays last", () => {
+      test("#when custom agent order is provided #then build stays first, sisyphus stays second, and plan stays last", () => {
         // given
         const agents: Record<string, unknown> = {
           [plan]: { name: "plan" },
@@ -95,10 +95,10 @@ describe("agent-priority-order", () => {
         ])
 
         // then
-        expect(Object.keys(result)).toEqual([build, hephaestus, sisyphus, prometheus, atlas, plan])
+        expect(Object.keys(result)).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan])
       })
 
-      test("#when custom agent order contains invalid entries #then ignores them and keeps valid/default ordering", () => {
+      test("#when custom agent order contains invalid entries #then still keeps build first, sisyphus second, and plan last", () => {
         // given
         const agents: Record<string, unknown> = {
           [atlas]: { name: "atlas" },
@@ -118,7 +118,7 @@ describe("agent-priority-order", () => {
         ])
 
         // then
-        expect(Object.keys(result)).toEqual([atlas, hephaestus, sisyphus, prometheus])
+        expect(Object.keys(result)).toEqual([sisyphus, atlas, hephaestus, prometheus])
       })
 
       test("#when core agents mixed with non-core #then core agents come first in canonical order", () => {
@@ -275,7 +275,7 @@ describe("agent-priority-order", () => {
         expect(result[plan]).toEqual({ name: "plan", mode: "primary", order: 6 })
       })
 
-      test("#when custom agent order is provided #then build stays first and plan stays last in order fields", () => {
+      test("#when custom agent order is provided #then pinned agents keep their global order fields", () => {
         // given
         const agents: Record<string, unknown> = {
           [build]: { name: "build", mode: "primary" },
@@ -289,9 +289,9 @@ describe("agent-priority-order", () => {
 
         // then
         expect(result[build]).toEqual({ name: "build", mode: "primary", order: 1 })
-        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 2 })
-        expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 3 })
-        expect(result[plan]).toEqual({ name: "plan", mode: "primary", order: 4 })
+        expect(result[sisyphus]).toEqual({ name: "sisyphus", mode: "primary", order: 2 })
+        expect(result[hephaestus]).toEqual({ name: "hephaestus", mode: "primary", order: 3 })
+        expect(result[plan]).toEqual({ name: "plan", mode: "primary", order: 6 })
       })
 
       test("#when core agent is non-object #then leaves value unchanged", () => {

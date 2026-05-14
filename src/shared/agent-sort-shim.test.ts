@@ -45,7 +45,7 @@ describe("agent-sort-shim", () => {
         expect(result).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan])
       })
 
-      test("#then follows configured core agent order", () => {
+      test("#then keeps build first, sisyphus second, and plan last even with configured order", () => {
         // given
         setAgentSortOrder(["build", "hephaestus", "sisyphus", "prometheus", "atlas", "plan"])
         const build = { name: "build" }
@@ -60,7 +60,7 @@ describe("agent-sort-shim", () => {
         const result = input.toSorted((a, b) => a.name.localeCompare(b.name))
 
         // then
-        expect(result).toEqual([build, hephaestus, sisyphus, prometheus, atlas, plan])
+        expect(result).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan])
       })
     })
   })
