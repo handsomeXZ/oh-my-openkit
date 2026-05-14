@@ -27,43 +27,47 @@ describe("agent-sort-shim", () => {
 
   describe("#given an array of all 4 core agent objects in random order", () => {
     describe("#when toSorted with alphabetical compareFn", () => {
-      test("#then returns canonical sisyphus->hephaestus->prometheus->atlas order", () => {
+      test("#then returns canonical build->sisyphus->hephaestus->prometheus->atlas->plan order", () => {
         // given
         setAgentSortOrder(undefined)
+        const build = { name: "build" }
         const sisyphus = { name: "Sisyphus - Ultraworker" }
         const hephaestus = { name: "Hephaestus - Deep Agent" }
         const prometheus = { name: "Prometheus - Plan Builder" }
         const atlas = { name: "Atlas - Plan Executor" }
-        const input = [atlas, prometheus, hephaestus, sisyphus]
+        const plan = { name: "plan" }
+        const input = [atlas, plan, prometheus, hephaestus, sisyphus, build]
 
         // when
         const result = input.toSorted((a, b) => a.name.localeCompare(b.name))
 
         // then
-        expect(result).toEqual([sisyphus, hephaestus, prometheus, atlas])
+        expect(result).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan])
       })
 
       test("#then follows configured core agent order", () => {
         // given
-        setAgentSortOrder(["hephaestus", "sisyphus", "prometheus", "atlas"])
+        setAgentSortOrder(["build", "hephaestus", "sisyphus", "prometheus", "atlas", "plan"])
+        const build = { name: "build" }
         const sisyphus = { name: "Sisyphus - Ultraworker" }
         const hephaestus = { name: "Hephaestus - Deep Agent" }
         const prometheus = { name: "Prometheus - Plan Builder" }
         const atlas = { name: "Atlas - Plan Executor" }
-        const input = [atlas, prometheus, hephaestus, sisyphus]
+        const plan = { name: "plan" }
+        const input = [atlas, plan, prometheus, hephaestus, sisyphus, build]
 
         // when
         const result = input.toSorted((a, b) => a.name.localeCompare(b.name))
 
         // then
-        expect(result).toEqual([hephaestus, sisyphus, prometheus, atlas])
+        expect(result).toEqual([build, hephaestus, sisyphus, prometheus, atlas, plan])
       })
     })
   })
 
   describe("#given 4 core agents mixed with 2 non-core agent objects", () => {
     describe("#when toSorted with alphabetical compareFn", () => {
-      test("#then core agents come first in canonical order followed by non-core agents alphabetically", () => {
+      test("#then ranked agents come first in canonical order followed by non-core agents alphabetically", () => {
         // given
         const sisyphus = { name: "Sisyphus - Ultraworker" }
         const hephaestus = { name: "Hephaestus - Deep Agent" }
@@ -77,22 +81,24 @@ describe("agent-sort-shim", () => {
         const result = input.toSorted((a, b) => a.name.localeCompare(b.name))
 
         // then
-        expect(result).toEqual([sisyphus, hephaestus, prometheus, atlas, build, plan])
+        expect(result).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan])
       })
     })
   })
 
   describe("#given OpenCode Agent.list style sort with default agent priority", () => {
     describe("#when toSorted compares default_agent first and then name", () => {
-      test("#then core agents stay in canonical order before non-core agents", () => {
+      test("#then build stays first and plan stays last among ranked agents", () => {
         // given
+        const build = { name: "build" }
         const sisyphus = { name: AGENT_DISPLAY_NAMES.sisyphus, default_agent: true }
         const hephaestus = { name: AGENT_DISPLAY_NAMES.hephaestus }
         const prometheus = { name: AGENT_DISPLAY_NAMES.prometheus }
         const atlas = { name: AGENT_DISPLAY_NAMES.atlas }
+        const plan = { name: "plan" }
         const oracle = { name: AGENT_DISPLAY_NAMES.oracle }
         const explore = { name: AGENT_DISPLAY_NAMES.explore }
-        const input: AgentListItem[] = [oracle, atlas, explore, prometheus, hephaestus, sisyphus]
+        const input: AgentListItem[] = [oracle, atlas, explore, plan, prometheus, hephaestus, sisyphus, build]
 
         // when
         const result = input.toSorted((left, right) => {
@@ -103,7 +109,7 @@ describe("agent-sort-shim", () => {
         })
 
         // then
-        expect(result).toEqual([sisyphus, hephaestus, prometheus, atlas, explore, oracle])
+        expect(result).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan, explore, oracle])
       })
     })
   })
@@ -206,21 +212,23 @@ describe("agent-sort-shim", () => {
 
   describe("#given installAgentSortShim has been invoked multiple times", () => {
     describe("#when toSorted is called on core agents after duplicate installs", () => {
-      test("#then result is canonical order with no double-wrapping side effects", () => {
+      test("#then result is canonical order with build first and plan last", () => {
         // given
         installAgentSortShim()
         installAgentSortShim()
+        const build = { name: "build" }
         const sisyphus = { name: "Sisyphus - Ultraworker" }
         const hephaestus = { name: "Hephaestus - Deep Agent" }
         const prometheus = { name: "Prometheus - Plan Builder" }
         const atlas = { name: "Atlas - Plan Executor" }
-        const input = [atlas, prometheus, hephaestus, sisyphus]
+        const plan = { name: "plan" }
+        const input = [atlas, plan, prometheus, hephaestus, sisyphus, build]
 
         // when
         const result = input.toSorted((a, b) => a.name.localeCompare(b.name))
 
         // then
-        expect(result).toEqual([sisyphus, hephaestus, prometheus, atlas])
+        expect(result).toEqual([build, sisyphus, hephaestus, prometheus, atlas, plan])
       })
     })
   })

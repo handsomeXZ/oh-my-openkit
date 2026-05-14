@@ -1,13 +1,13 @@
 /// <reference types="bun-types" />
 
-import { beforeAll, describe, expect, test } from "bun:test"
+import { afterEach, beforeAll, describe, expect, test } from "bun:test"
 
 import {
   AGENT_DISPLAY_NAMES,
   getAgentListDisplayName,
   normalizeAgentForPromptKey,
 } from "./agent-display-names"
-import { installAgentSortShim } from "./agent-sort-shim"
+import { installAgentSortShim, setAgentSortOrder } from "./agent-sort-shim"
 
 type AgentListItem = {
   name: string
@@ -37,32 +37,42 @@ describe("OpenCode Agent.list() sort with runtime display names", () => {
     installAgentSortShim()
   })
 
+  afterEach(() => {
+    setAgentSortOrder(undefined)
+  })
+
   describe("#given the four core agents and a mix of non-core agents", () => {
-    test("#when sorted using OpenCode-style ordering #then core agents come first in canonical order", () => {
+    test("#when sorted using OpenCode-style ordering #then build comes first and plan comes last", () => {
+      const build = getAgentListDisplayName("build")
       const sisyphus = getAgentListDisplayName("sisyphus")
       const hephaestus = getAgentListDisplayName("hephaestus")
       const prometheus = getAgentListDisplayName("prometheus")
       const atlas = getAgentListDisplayName("atlas")
+      const plan = getAgentListDisplayName("plan")
 
       const allAgents = [
+        build,
         sisyphus,
         hephaestus,
         prometheus,
         atlas,
+        plan,
         "athena",
         "explore",
         "metis",
         "oracle",
       ]
 
-      const sorted = simulateOpencodeSort(allAgents, sisyphus)
+      const sorted = simulateOpencodeSort(allAgents, build)
       const orderedConfigKeys = sorted.map((name) => normalizeAgentForPromptKey(name))
 
       expect(orderedConfigKeys).toEqual([
+        "build",
         "sisyphus",
         "hephaestus",
         "prometheus",
         "atlas",
+        "plan",
         "athena",
         "explore",
         "metis",
@@ -70,41 +80,49 @@ describe("OpenCode Agent.list() sort with runtime display names", () => {
       ])
     })
 
-    test("#when default_agent is unset #then canonical core order still holds via the sort shim", () => {
+    test("#when default_agent is unset #then build still stays first and plan still stays last via the sort shim", () => {
+      const build = getAgentListDisplayName("build")
       const sisyphus = getAgentListDisplayName("sisyphus")
       const hephaestus = getAgentListDisplayName("hephaestus")
       const prometheus = getAgentListDisplayName("prometheus")
       const atlas = getAgentListDisplayName("atlas")
+      const plan = getAgentListDisplayName("plan")
 
-      const allAgents = [hephaestus, prometheus, atlas, sisyphus, "athena", "oracle"]
+      const allAgents = [plan, hephaestus, prometheus, atlas, sisyphus, build, "athena", "oracle"]
 
       const sorted = simulateOpencodeSort(allAgents, "no-such-default-agent")
       const orderedConfigKeys = sorted.map((name) => normalizeAgentForPromptKey(name))
 
-      expect(orderedConfigKeys.slice(0, 4)).toEqual([
+      expect(orderedConfigKeys.slice(0, 6)).toEqual([
+        "build",
         "sisyphus",
         "hephaestus",
         "prometheus",
         "atlas",
+        "plan",
       ])
     })
   })
 
-  describe("#given runtime names containing only core agents", () => {
-    test("#when sorted #then sisyphus, hephaestus, prometheus, atlas in that order", () => {
+  describe("#given runtime names containing only ranked agents", () => {
+    test("#when sorted #then build first and plan last", () => {
+      const build = getAgentListDisplayName("build")
       const sisyphus = getAgentListDisplayName("sisyphus")
       const hephaestus = getAgentListDisplayName("hephaestus")
       const prometheus = getAgentListDisplayName("prometheus")
       const atlas = getAgentListDisplayName("atlas")
+      const plan = getAgentListDisplayName("plan")
 
-      const sorted = simulateOpencodeSort([atlas, prometheus, hephaestus, sisyphus], sisyphus)
+      const sorted = simulateOpencodeSort([atlas, plan, prometheus, hephaestus, sisyphus, build], build)
       const orderedConfigKeys = sorted.map((name) => normalizeAgentForPromptKey(name))
 
       expect(orderedConfigKeys).toEqual([
+        "build",
         "sisyphus",
         "hephaestus",
         "prometheus",
         "atlas",
+        "plan",
       ])
     })
   })
