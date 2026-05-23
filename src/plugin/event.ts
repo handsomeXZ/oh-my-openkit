@@ -30,18 +30,24 @@ import { getAgentConfigKey } from "../shared/agent-display-names";
 import { readConnectedProvidersCache } from "../shared/connected-providers-cache";
 import { invalidateContextWindowUsageCache } from "../shared/dynamic-truncator";
 import { log } from "../shared/logger";
+import { isAmbiguousPostDispatchPromptFailure } from "../shared/prompt-failure-classifier";
 import { shouldRetryError } from "../shared/model-error-classifier";
 import { buildFallbackChainFromModels } from "../shared/fallback-chain-from-models";
 import { extractRetryAttempt, normalizeRetryStatusMessage } from "../shared/retry-status-utils";
 import { clearSessionModel, getSessionModel, setSessionModel } from "../shared/session-model-state";
 import { clearSessionPromptParams } from "../shared/session-prompt-params-state";
 import { deleteSessionTools } from "../shared/session-tools-store";
-import { lspManager } from "../tools";
 import { dispatchOpenClawEvent } from "../openclaw/runtime-dispatch";
 import { createTeamIdleWakeHint } from "../hooks/team-session-events/team-idle-wake-hint";
+import { buildTeamIdleWakeHintClient } from "./build-team-idle-wake-hint-client";
 import { createTeamLeadOrphanHandler } from "../hooks/team-session-events/team-lead-orphan-handler";
 import { createTeamMemberErrorHandler } from "../hooks/team-session-events/team-member-error-handler";
 import { createTeamMemberStatusHandler } from "../hooks/team-session-events/team-member-status-handler";
+import {
+  dispatchInternalPrompt,
+  isInternalPromptDispatchAccepted,
+  releasePromptAsyncReservation,
+} from "../hooks/shared/prompt-async-gate";
 
 import type { CreatedHooks } from "../create-hooks";
 import type { Managers } from "../create-managers";
@@ -52,6 +58,24 @@ import { resolveMessageEventSessionID, resolveSessionEventID } from "../shared/e
 type FirstMessageVariantGate = {
   markSessionCreated: (sessionInfo: { id?: string; title?: string; parentID?: string } | undefined) => void;
   clear: (sessionID: string) => void;
+};
+
+type FallbackContinuationDedupeKeys = {
+  modelKey?: string;
+  providerModelKey?: string;
+};
+
+type FallbackContinuationDedupeState = {
+  modelKeys: Set<string>;
+  providerModelKeys: Set<string>;
+  providerlessModelKeys: Set<string>;
+};
+
+type FallbackContinuationContext = {
+  agentName?: string;
+  providerID?: string;
+  dedupeProviderID?: string;
+  modelID?: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -219,8 +243,15 @@ export function createEventHandler(args: {
   const lastHandledModelErrorMessageID = new Map<string, string>();
   const lastHandledRetryStatusKey = new Map<string, string>();
   const lastKnownModelBySession = new Map<string, { providerID: string; modelID: string }>();
+  const modelFallbackContinuationsInFlight = new Set<string>();
+  const lastDispatchedModelFallbackContinuationKeys = new Map<string, FallbackContinuationDedupeState>();
 
   const resolveFallbackProviderID = (sessionID: string, providerHint?: string): string => {
+    const normalizedProviderHint = providerHint?.trim();
+    if (normalizedProviderHint) {
+      return normalizedProviderHint;
+    }
+
     const sessionModel = getSessionModel(sessionID);
     if (sessionModel?.providerID) {
       return sessionModel.providerID;
@@ -229,11 +260,6 @@ export function createEventHandler(args: {
     const lastKnownModel = lastKnownModelBySession.get(sessionID);
     if (lastKnownModel?.providerID) {
       return lastKnownModel.providerID;
-    }
-
-    const normalizedProviderHint = providerHint?.trim();
-    if (normalizedProviderHint) {
-      return normalizedProviderHint;
     }
 
     const connectedProvider = readConnectedProvidersCache()?.[0];
@@ -317,19 +343,15 @@ export function createEventHandler(args: {
     ? createTeamLeadOrphanHandler(teamModeConfig, managers.tmuxSessionManager, managers.backgroundManager)
     : undefined;
   const teamMemberErrorHandler = teamModeConfig
-    ? createTeamMemberErrorHandler(teamModeConfig)
+    ? createTeamMemberErrorHandler(teamModeConfig, { client: pluginContext.client })
     : undefined;
   const teamMemberStatusHandler = teamModeConfig
     ? createTeamMemberStatusHandler(teamModeConfig)
     : undefined;
-  const teamIdleWakeHint = teamModeConfig && pluginContext.client.session?.promptAsync
+  const teamIdleWakeHint = teamModeConfig && typeof pluginContext.client.session?.promptAsync === "function"
     ? createTeamIdleWakeHint({
         directory: pluginContext.directory,
-        client: {
-          session: {
-            promptAsync: pluginContext.client.session.promptAsync,
-          },
-        },
+        client: buildTeamIdleWakeHintClient(pluginContext.client),
       }, teamModeConfig)
     : undefined;
   const TMUX_ACTIVITY_EVENT_TYPES = new Set([
@@ -359,55 +381,200 @@ export function createEventHandler(args: {
     return true;
   };
 
+  const recoverInterruptedToolResultsOnIdleEvent = async (input: EventInput): Promise<boolean> => {
+    if (input.event.type !== "session.idle") {
+      return false;
+    }
+
+    const sessionID = getEventSessionID(input);
+    if (!sessionID || !hooks.sessionRecovery?.handleInterruptedToolResultsOnIdle) {
+      return false;
+    }
+
+    return hooks.sessionRecovery.handleInterruptedToolResultsOnIdle(sessionID);
+  };
+
+  const dispatchIdleOnlyHooks = async (input: EventInput): Promise<void> => {
+    managers.tmuxSessionManager?.onEvent?.(input.event);
+    await runEventHookSafely("teamIdleWakeHint", teamIdleWakeHint, input);
+    await runEventHookSafely("teamMemberStatusHandler", teamMemberStatusHandler, input);
+  };
+
+  const getFallbackContinuationKeys = (fallbackContext?: FallbackContinuationContext): FallbackContinuationDedupeKeys => {
+    const agentKey = fallbackContext?.agentName
+      ? getAgentConfigKey(fallbackContext.agentName).trim().toLowerCase()
+      : "";
+    const providerID = fallbackContext?.dedupeProviderID?.trim().toLowerCase() ?? "";
+    const modelID = fallbackContext?.modelID?.trim().toLowerCase() ?? "";
+
+    if (!agentKey || !modelID) {
+      return {};
+    }
+
+    return {
+      modelKey: `${agentKey}:${modelID}`,
+      ...(providerID ? { providerModelKey: `${agentKey}:${providerID}:${modelID}` } : {}),
+    };
+  };
+
+  const getFallbackContinuationDedupeState = (sessionID: string): FallbackContinuationDedupeState => {
+    const existingState = lastDispatchedModelFallbackContinuationKeys.get(sessionID);
+    if (existingState) {
+      return existingState;
+    }
+
+    const state = {
+      modelKeys: new Set<string>(),
+      providerModelKeys: new Set<string>(),
+      providerlessModelKeys: new Set<string>(),
+    };
+    lastDispatchedModelFallbackContinuationKeys.set(sessionID, state);
+    return state;
+  };
+
+  const wasFallbackContinuationAlreadyDispatched = (
+    state: FallbackContinuationDedupeState | undefined,
+    keys: FallbackContinuationDedupeKeys,
+  ): boolean => {
+    if (!state || !keys.modelKey) {
+      return false;
+    }
+
+    if (!keys.providerModelKey) {
+      return state.modelKeys.has(keys.modelKey);
+    }
+
+    return state.providerModelKeys.has(keys.providerModelKey) || state.providerlessModelKeys.has(keys.modelKey);
+  };
+
+  const shouldSkipFallbackContinuation = (
+    sessionID: string,
+    source: string,
+    fallbackContext?: FallbackContinuationContext,
+  ): boolean => {
+    const fallbackKeys = getFallbackContinuationKeys(fallbackContext);
+
+    if (modelFallbackContinuationsInFlight.has(sessionID)) {
+      log("[event] model-fallback continuation skipped because one is already in flight", { sessionID, source });
+      return true;
+    }
+
+    const lastDispatchedKeys = lastDispatchedModelFallbackContinuationKeys.get(sessionID);
+    if (wasFallbackContinuationAlreadyDispatched(lastDispatchedKeys, fallbackKeys)) {
+      log("[event] model-fallback continuation skipped because matching fallback was already dispatched", {
+        sessionID,
+        source,
+      });
+      return true;
+    }
+
+    return false;
+  };
+
   const autoContinueAfterFallback = async (
     sessionID: string,
     source: string,
-    fallbackContext?: {
-      agentName?: string;
-      providerID?: string;
-      modelID?: string;
-    },
+    fallbackContext?: FallbackContinuationContext,
   ): Promise<void> => {
-    await pluginContext.client.session.abort({ path: { id: sessionID } }).catch((error) => {
-      log("[event] model-fallback abort failed", { sessionID, source, error });
-    });
+    const fallbackKeys = getFallbackContinuationKeys(fallbackContext);
 
-    const launchAgent = fallbackContext?.agentName
-      ? resolveRegisteredAgentName(fallbackContext.agentName)
-      : undefined;
-    const launchModel = fallbackContext?.providerID && fallbackContext?.modelID
-      ? { providerID: fallbackContext.providerID, modelID: fallbackContext.modelID }
-      : undefined;
-
-    const agentConfigKey = fallbackContext?.agentName
-      ? getAgentConfigKey(fallbackContext.agentName)
-      : undefined;
-    const agentSettings = agentConfigKey
-      ? pluginConfig.agents?.[agentConfigKey as keyof NonNullable<typeof pluginConfig.agents>]
-      : undefined;
-    const launchVariant = (agentSettings as { variant?: string } | undefined)?.variant;
-
-    const promptBody = {
-      path: { id: sessionID },
-      body: {
-        ...(launchAgent ? { agent: launchAgent } : {}),
-        ...(launchModel ? { model: launchModel } : {}),
-        ...(launchVariant ? { variant: launchVariant } : {}),
-        parts: [createInternalAgentContinuationTextPart("continue")],
-      },
-      query: { directory: pluginContext.directory },
-    };
-
-    if (typeof pluginContext.client.session.promptAsync === "function") {
-      await pluginContext.client.session.promptAsync(promptBody).catch((error) => {
-        log("[event] model-fallback promptAsync failed", { sessionID, source, error });
-      });
+    if (shouldSkipFallbackContinuation(sessionID, source, fallbackContext)) {
       return;
     }
 
-    await pluginContext.client.session.prompt(promptBody).catch((error) => {
-      log("[event] model-fallback prompt failed", { sessionID, source, error });
-    });
+    modelFallbackContinuationsInFlight.add(sessionID);
+    let dispatched = false;
+    try {
+      try {
+        await pluginContext.client.session.abort({ path: { id: sessionID } });
+      } catch (error) {
+        log("[event] model-fallback abort failed", { sessionID, source, error });
+        return;
+      }
+      releasePromptAsyncReservation(sessionID, `model-fallback-abort:${source}`, {
+        reservedBy: [`model-fallback:${source}`, `model-fallback:${source}:sync`],
+        reservedByPrefix: "model-fallback:",
+      });
+
+      const launchAgent = fallbackContext?.agentName
+        ? resolveRegisteredAgentName(fallbackContext.agentName)
+        : undefined;
+      const launchModel = fallbackContext?.providerID && fallbackContext?.modelID
+        ? { providerID: fallbackContext.providerID, modelID: fallbackContext.modelID }
+        : undefined;
+
+      const agentConfigKey = fallbackContext?.agentName
+        ? getAgentConfigKey(fallbackContext.agentName)
+        : undefined;
+      const agentSettings = agentConfigKey
+        ? pluginConfig.agents?.[agentConfigKey as keyof NonNullable<typeof pluginConfig.agents>]
+        : undefined;
+      const launchVariant = (agentSettings as { variant?: string } | undefined)?.variant;
+
+      const promptBody = {
+        path: { id: sessionID },
+        body: {
+          ...(launchAgent ? { agent: launchAgent } : {}),
+          ...(launchModel ? { model: launchModel } : {}),
+          ...(launchVariant ? { variant: launchVariant } : {}),
+          parts: [createInternalAgentContinuationTextPart("continue")],
+        },
+        query: { directory: pluginContext.directory },
+      };
+
+      if (typeof pluginContext.client.session.promptAsync === "function") {
+        const promptResult = await dispatchInternalPrompt({
+          mode: "async",
+          client: pluginContext.client,
+          sessionID,
+          source: `model-fallback:${source}`,
+          queueBehavior: "defer",
+          input: promptBody,
+        });
+        if (isInternalPromptDispatchAccepted(promptResult)) {
+          dispatched = true;
+        } else if (promptResult.status === "failed") {
+          if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
+            dispatched = true;
+          }
+          const error = promptResult.error;
+          log("[event] model-fallback promptAsync failed", { sessionID, source, error });
+        } else {
+          log("[event] model-fallback promptAsync skipped by gate", { sessionID, source, status: promptResult.status });
+        }
+        return;
+      }
+
+      const promptResult = await dispatchInternalPrompt({
+        mode: "sync",
+        client: pluginContext.client,
+        sessionID,
+        source: `model-fallback:${source}:sync`,
+        queueBehavior: "defer",
+        input: promptBody,
+      });
+      if (isInternalPromptDispatchAccepted(promptResult)) {
+        dispatched = true;
+      } else if (promptResult.status === "failed") {
+        if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
+          dispatched = true;
+        }
+        log("[event] model-fallback prompt failed", { sessionID, source, error: promptResult.error });
+      } else {
+        log("[event] model-fallback prompt skipped by gate", { sessionID, source, status: promptResult.status });
+      }
+    } finally {
+      if (dispatched && fallbackKeys.modelKey) {
+        const dispatchedKeys = getFallbackContinuationDedupeState(sessionID);
+        dispatchedKeys.modelKeys.add(fallbackKeys.modelKey);
+        if (fallbackKeys.providerModelKey) {
+          dispatchedKeys.providerModelKeys.add(fallbackKeys.providerModelKey);
+        } else {
+          dispatchedKeys.providerlessModelKeys.add(fallbackKeys.modelKey);
+        }
+      }
+      modelFallbackContinuationsInFlight.delete(sessionID);
+    }
   };
 
   return async (input): Promise<void> => {
@@ -418,6 +585,7 @@ export function createEventHandler(args: {
       now: Date.now(),
       dedupWindowMs: DEDUP_WINDOW_MS,
     });
+    const syntheticIdle = normalizeSessionStatusToIdle(input);
 
     if (input.event.type === "session.idle") {
       const sessionID = getEventSessionID(input);
@@ -433,16 +601,27 @@ export function createEventHandler(args: {
             recentAnyIdles.delete(sessionID);
           }
         }
+      }
+      const recovered = await recoverInterruptedToolResultsOnIdleEvent(input);
+      if (recovered) {
+        return;
+      }
+      if (sessionID) {
+        const now = Date.now();
         recentRealIdles.set(sessionID, now);
         if (!shouldDispatchIdleEvent(sessionID, now)) {
           return;
         }
       }
+    } else if (syntheticIdle) {
+      const recovered = await recoverInterruptedToolResultsOnIdleEvent(syntheticIdle as EventInput);
+      if (recovered) {
+        return;
+      }
     }
 
     await dispatchToHooks(input);
 
-    const syntheticIdle = normalizeSessionStatusToIdle(input);
     if (syntheticIdle) {
       const sessionID = (syntheticIdle.event.properties as Record<string, unknown>)?.sessionID as string;
       const now = Date.now();
@@ -455,7 +634,8 @@ export function createEventHandler(args: {
       if (!shouldDispatchIdleEvent(sessionID, now)) {
         return;
       }
-      await dispatchToHooks(syntheticIdle as EventInput);
+      const syntheticIdleInput = syntheticIdle as EventInput;
+      await dispatchToHooks(syntheticIdleInput);
       if (pluginConfig.openclaw) {
         await dispatchOpenClawEvent({
           config: pluginConfig.openclaw,
@@ -467,6 +647,7 @@ export function createEventHandler(args: {
           },
         });
       }
+      await dispatchIdleOnlyHooks(syntheticIdleInput);
     }
 
     const { event } = input;
@@ -526,6 +707,8 @@ export function createEventHandler(args: {
         lastHandledModelErrorMessageID.delete(sessionID);
         lastHandledRetryStatusKey.delete(sessionID);
         lastKnownModelBySession.delete(sessionID);
+        modelFallbackContinuationsInFlight.delete(sessionID);
+        lastDispatchedModelFallbackContinuationKeys.delete(sessionID);
         if (modelFallback) {
           clearPendingModelFallback(modelFallback, sessionID);
           clearSessionFallbackChain(modelFallback, sessionID);
@@ -553,7 +736,6 @@ export function createEventHandler(args: {
         }
         deleteSessionTools(sessionID);
         await managers.skillMcpManager.disconnectSession(sessionID);
-        await lspManager.cleanupTempDirectoryClients();
         if (tmuxIntegrationEnabled) {
           await managers.tmuxSessionManager.onSessionDeleted({
             sessionID,
@@ -587,9 +769,7 @@ export function createEventHandler(args: {
     }
 
     if (event.type === "session.idle") {
-      managers.tmuxSessionManager?.onEvent?.(event);
-      await runEventHookSafely("teamIdleWakeHint", teamIdleWakeHint, input);
-      await runEventHookSafely("teamMemberStatusHandler", teamMemberStatusHandler, input);
+      await dispatchIdleOnlyHooks(input);
     }
 
     if (event.type === "message.updated") {
@@ -597,7 +777,8 @@ export function createEventHandler(args: {
       const sessionID = resolveMessageEventSessionID(props);
       const agent = info?.agent as string | undefined;
       const role = info?.role as string | undefined;
-      if (sessionID && info?.finish === true) {
+      const finish = info?.finish;
+      if (sessionID && ((typeof finish === "string" && finish.length > 0) || finish === true)) {
         invalidateContextWindowUsageCache(pluginContext as PluginInput, sessionID);
       }
       if (sessionID && role === "user") {
@@ -643,29 +824,30 @@ export function createEventHandler(args: {
               }
 
               if (agentName) {
-                const currentProvider = resolveFallbackProviderID(
-                  sessionID,
-                  info?.providerID as string | undefined,
-                );
+                const providerHint = info?.providerID as string | undefined;
+                const currentProvider = resolveFallbackProviderID(sessionID, providerHint);
                 const rawModel = (info?.modelID as string | undefined) ?? "claude-opus-4-7";
                 const currentModel = normalizeFallbackModelID(rawModel);
-                applyUserConfiguredFallbackChain(modelFallback, sessionID, agentName, currentProvider, args.pluginConfig);
+                const fallbackContext = {
+                  agentName,
+                  providerID: currentProvider,
+                  dedupeProviderID: providerHint,
+                  modelID: currentModel,
+                };
+                const shouldAutoContinue = shouldAutoRetrySession(sessionID) &&
+                  !hooks.stopContinuationGuard?.isStopped(sessionID);
 
-                const setFallback = modelFallback
-                  ? setPendingModelFallback(modelFallback, sessionID, agentName, currentProvider, currentModel)
-                  : false;
+                if (!shouldAutoContinue || !shouldSkipFallbackContinuation(sessionID, "message.updated", fallbackContext)) {
+                  applyUserConfiguredFallbackChain(modelFallback, sessionID, agentName, currentProvider, args.pluginConfig);
 
-                if (
-                  setFallback &&
-                  shouldAutoRetrySession(sessionID) &&
-                  !hooks.stopContinuationGuard?.isStopped(sessionID)
-                ) {
-                  lastHandledModelErrorMessageID.set(sessionID, assistantMessageID);
-                  await autoContinueAfterFallback(sessionID, "message.updated", {
-                    agentName,
-                    providerID: currentProvider,
-                    modelID: currentModel,
-                  });
+                  const setFallback = modelFallback
+                    ? setPendingModelFallback(modelFallback, sessionID, agentName, currentProvider, currentModel)
+                    : false;
+
+                  if (setFallback && shouldAutoContinue) {
+                    lastHandledModelErrorMessageID.set(sessionID, assistantMessageID);
+                    await autoContinueAfterFallback(sessionID, "message.updated", fallbackContext);
+                  }
                 }
               }
             }
@@ -684,6 +866,7 @@ export function createEventHandler(args: {
       // (non-retry idle) so future failures with the same key can trigger fallback again.
       if (sessionID && status?.type === "idle") {
         lastHandledRetryStatusKey.delete(sessionID);
+        lastDispatchedModelFallbackContinuationKeys.delete(sessionID);
       }
 
       if (sessionID && status?.type === "retry" && isModelFallbackEnabled && !isRuntimeFallbackEnabled) {
@@ -718,22 +901,25 @@ export function createEventHandler(args: {
               const currentProvider = resolveFallbackProviderID(sessionID, parsed.providerID);
               let currentModel = parsed.modelID ?? lastKnown?.modelID ?? "claude-opus-4-7";
               currentModel = normalizeFallbackModelID(currentModel);
-              applyUserConfiguredFallbackChain(modelFallback, sessionID, agentName, currentProvider, args.pluginConfig);
+              const fallbackContext = {
+                agentName,
+                providerID: currentProvider,
+                dedupeProviderID: parsed.providerID,
+                modelID: currentModel,
+              };
+              const shouldAutoContinue = shouldAutoRetrySession(sessionID) &&
+                !hooks.stopContinuationGuard?.isStopped(sessionID);
 
-              const setFallback = modelFallback
-                ? setPendingModelFallback(modelFallback, sessionID, agentName, currentProvider, currentModel)
-                : false;
+              if (!shouldAutoContinue || !shouldSkipFallbackContinuation(sessionID, "session.status", fallbackContext)) {
+                applyUserConfiguredFallbackChain(modelFallback, sessionID, agentName, currentProvider, args.pluginConfig);
 
-              if (
-                setFallback &&
-                shouldAutoRetrySession(sessionID) &&
-                !hooks.stopContinuationGuard?.isStopped(sessionID)
-              ) {
-                await autoContinueAfterFallback(sessionID, "session.status", {
-                  agentName,
-                  providerID: currentProvider,
-                  modelID: currentModel,
-                });
+                const setFallback = modelFallback
+                  ? setPendingModelFallback(modelFallback, sessionID, agentName, currentProvider, currentModel)
+                  : false;
+
+                if (setFallback && shouldAutoContinue) {
+                  await autoContinueAfterFallback(sessionID, "session.status", fallbackContext);
+                }
               }
             }
           }
@@ -779,13 +965,27 @@ export function createEventHandler(args: {
                 log("[event] compaction before recovery continue failed:", { sessionID, error: err });
               });
 
-            await pluginContext.client.session
-              .prompt({
+            const promptResult = await dispatchInternalPrompt({
+              mode: "sync",
+              client: pluginContext.client,
+              sessionID,
+              source: "session-recovery:post-compaction-continue",
+              queueBehavior: "defer",
+              input: {
                 path: { id: sessionID },
                 body: { parts: [createInternalAgentContinuationTextPart("continue")] },
                 query: { directory: pluginContext.directory },
-              })
-              .catch(() => {});
+              },
+            });
+            if (promptResult.status === "failed") {
+              if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
+                log("[event] recovery continue prompt may have been accepted before ambiguous failure", { sessionID, error: promptResult.error });
+              } else {
+                log("[event] recovery continue prompt failed", { sessionID, error: promptResult.error });
+              }
+            } else if (!isInternalPromptDispatchAccepted(promptResult)) {
+              log("[event] recovery continue prompt skipped by gate", { sessionID, status: promptResult.status });
+            }
           }
         }
         // Second, try model fallback for model errors (rate limit, quota, provider issues, etc.)
@@ -804,28 +1004,29 @@ export function createEventHandler(args: {
 
           if (agentName) {
             const parsed = extractProviderModelFromErrorMessage(errorMessage);
-            const currentProvider = resolveFallbackProviderID(
-              sessionID,
-              (props?.providerID as string | undefined) || parsed.providerID,
-            );
+            const providerHint = (props?.providerID as string | undefined) || parsed.providerID;
+            const currentProvider = resolveFallbackProviderID(sessionID, providerHint);
             let currentModel = (props?.modelID as string) || parsed.modelID || "claude-opus-4-7";
             currentModel = normalizeFallbackModelID(currentModel);
-            applyUserConfiguredFallbackChain(modelFallback, sessionID, agentName, currentProvider, args.pluginConfig);
+            const fallbackContext = {
+              agentName,
+              providerID: currentProvider,
+              dedupeProviderID: providerHint,
+              modelID: currentModel,
+            };
+            const shouldAutoContinue = shouldAutoRetrySession(sessionID) &&
+              !hooks.stopContinuationGuard?.isStopped(sessionID);
 
-            const setFallback = modelFallback
-              ? setPendingModelFallback(modelFallback, sessionID, agentName, currentProvider, currentModel)
-              : false;
+            if (!shouldAutoContinue || !shouldSkipFallbackContinuation(sessionID, "session.error", fallbackContext)) {
+              applyUserConfiguredFallbackChain(modelFallback, sessionID, agentName, currentProvider, args.pluginConfig);
 
-            if (
-              setFallback &&
-              shouldAutoRetrySession(sessionID) &&
-              !hooks.stopContinuationGuard?.isStopped(sessionID)
-            ) {
-              await autoContinueAfterFallback(sessionID, "session.error", {
-                agentName,
-                providerID: currentProvider,
-                modelID: currentModel,
-              });
+              const setFallback = modelFallback
+                ? setPendingModelFallback(modelFallback, sessionID, agentName, currentProvider, currentModel)
+                : false;
+
+              if (setFallback && shouldAutoContinue) {
+                await autoContinueAfterFallback(sessionID, "session.error", fallbackContext);
+              }
             }
           }
         }

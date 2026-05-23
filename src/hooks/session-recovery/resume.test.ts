@@ -1,10 +1,54 @@
 declare const require: (name: string) => any
-const { describe, expect, test } = require("bun:test")
-import { extractResumeConfig, resumeSession } from "./resume"
+const { afterEach, describe, expect, test } = require("bun:test")
+
 import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker"
+import { releaseAllPromptAsyncReservationsForTesting } from "../shared/prompt-async-gate"
+import { extractResumeConfig, findLastUserMessage, resumeSession } from "./resume"
 import type { MessageData } from "./types"
 
 describe("session-recovery resume", () => {
+  afterEach(() => {
+    releaseAllPromptAsyncReservationsForTesting()
+  })
+
+  test("findLastUserMessage skips synthetic and internally marked user messages", () => {
+    // given
+    const realUserMessage: MessageData = {
+      info: {
+        role: "user",
+        agent: "Sisyphus",
+        model: { providerID: "openai", modelID: "gpt-5.3-codex" },
+      },
+      parts: [{ type: "text", text: "real user task" }],
+    }
+    const syntheticUserMessage: MessageData = {
+      info: {
+        role: "user",
+        agent: "Atlas",
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
+      },
+      parts: [{ type: "text", text: "synthetic wake", synthetic: true }],
+    }
+    const internalUserMessage: MessageData = {
+      info: {
+        role: "user",
+        agent: "Hephaestus",
+        model: { providerID: "openai", modelID: "gpt-5.4" },
+      },
+      parts: [{ type: "text", text: `internal wake\n${OMO_INTERNAL_INITIATOR_MARKER}` }],
+    }
+
+    // when
+    const result = findLastUserMessage([
+      realUserMessage,
+      syntheticUserMessage,
+      internalUserMessage,
+    ])
+
+    // then
+    expect(result).toBe(realUserMessage)
+  })
+
   test("extractResumeConfig carries tools from last user message", () => {
     // given
     const userMessage: MessageData = {
@@ -83,5 +127,28 @@ describe("session-recovery resume", () => {
     expect(firstPart?.synthetic).toBe(true)
     expect(firstPart?.metadata?.compaction_continue).toBe(true)
     expect(promptBody?.noReply).toBeUndefined()
+  })
+
+  test("#given recovery resume may have been accepted before EOF #when promptAsync fails ambiguously #then resume is treated as started", async () => {
+    // given
+    let promptCalls = 0
+    const client = {
+      session: {
+        promptAsync: async () => {
+          promptCalls += 1
+          throw new Error("JSON Parse error: Unexpected EOF")
+        },
+      },
+    }
+
+    // when
+    const ok = await resumeSession(client as never, {
+      sessionID: "ses_resume_eof",
+      agent: "Hephaestus",
+    })
+
+    // then
+    expect(ok).toBe(true)
+    expect(promptCalls).toBe(1)
   })
 })

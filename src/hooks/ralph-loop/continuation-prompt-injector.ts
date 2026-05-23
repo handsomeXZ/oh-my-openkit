@@ -5,11 +5,13 @@ import { getMessageDir } from "./message-storage-directory"
 import { withTimeout } from "./with-timeout"
 import {
 	createInternalAgentContinuationTextPart,
+	isAmbiguousPostDispatchPromptFailure,
 	isRecord,
 	normalizeSDKResponse,
 	resolveInheritedPromptTools,
 } from "../../shared"
-import { normalizeAgentForPromptKey } from "../../shared/agent-display-names"
+import { normalizeAgentForPrompt, stripAgentListSortPrefix } from "../../shared/agent-display-names"
+import { dispatchInternalPrompt } from "../shared/prompt-async-gate"
 
 type MessageInfo = {
 	agent?: string
@@ -21,6 +23,7 @@ type MessageInfo = {
 
 export type ContinuationPromptResult =
 	| { status: "dispatched" }
+	| { status: "deferred"; reason: "active" | "reserved" }
 	| { status: "rejected"; error: Error }
 
 function extractPromptAsyncError(response: unknown): unknown | undefined {
@@ -58,6 +61,23 @@ function createPromptAsyncError(prefix: string, error: unknown): Error {
 	return new Error(`${prefix}: ${describePromptAsyncError(error)}`)
 }
 
+function normalizeInheritedAgentForPrompt(agent: string | undefined): string | undefined {
+	if (typeof agent !== "string") {
+		return undefined
+	}
+
+	const inheritedAgent = stripAgentListSortPrefix(agent).trim()
+	if (!inheritedAgent) {
+		return undefined
+	}
+
+	if (inheritedAgent.includes(" - ")) {
+		return inheritedAgent
+	}
+
+	return normalizeAgentForPrompt(inheritedAgent)
+}
+
 export async function injectContinuationPrompt(
 	ctx: PluginInput,
 	options: {
@@ -66,6 +86,7 @@ export async function injectContinuationPrompt(
 		directory: string
 		apiTimeoutMs: number
 		inheritFromSessionID?: string
+		idleSettleMs?: number
 	},
 ): Promise<ContinuationPromptResult> {
 	let agent: string | undefined
@@ -110,7 +131,7 @@ export async function injectContinuationPrompt(
 	}
 
 	const inheritedTools = resolveInheritedPromptTools(sourceSessionID, tools)
-	const cleanAgent = normalizeAgentForPromptKey(agent)
+	const cleanAgent = normalizeInheritedAgentForPrompt(agent)
 
 	const launchModel = model
 		? { providerID: model.providerID, modelID: model.modelID }
@@ -119,17 +140,44 @@ export async function injectContinuationPrompt(
 
 	let response: unknown
 	try {
-		response = await ctx.client.session.promptAsync({
-			path: { id: options.sessionID },
-			body: {
-				...(cleanAgent !== undefined ? { agent: cleanAgent } : {}),
-				...(launchModel ? { model: launchModel } : {}),
-				...(launchVariant ? { variant: launchVariant } : {}),
-				...(inheritedTools ? { tools: inheritedTools } : {}),
-				parts: [createInternalAgentContinuationTextPart(options.prompt)],
+		const promptResult = await dispatchInternalPrompt({
+			mode: "async",
+			client: ctx.client,
+			sessionID: options.sessionID,
+			source: "ralph-loop",
+			settleMs: options.idleSettleMs,
+			queueBehavior: "defer",
+			input: {
+				path: { id: options.sessionID },
+				body: {
+					...(cleanAgent !== undefined ? { agent: cleanAgent } : {}),
+					...(launchModel ? { model: launchModel } : {}),
+					...(launchVariant ? { variant: launchVariant } : {}),
+					...(inheritedTools ? { tools: inheritedTools } : {}),
+					parts: [createInternalAgentContinuationTextPart(options.prompt)],
+				},
+				query: { directory: options.directory },
 			},
-			query: { directory: options.directory },
 		})
+		if (promptResult.status === "failed") {
+			if (isAmbiguousPostDispatchPromptFailure(promptResult)) {
+				return { status: "dispatched" }
+			}
+			throw promptResult.error
+		}
+		if (promptResult.status === "queued") {
+			return { status: "deferred", reason: "reserved" }
+		}
+		if (promptResult.status === "active" || promptResult.status === "reserved") {
+			return { status: "deferred", reason: promptResult.status }
+		}
+		if (promptResult.status !== "dispatched") {
+			return {
+				status: "rejected",
+				error: createPromptAsyncError(`promptAsync skipped: ${promptResult.status}`, promptResult),
+			}
+		}
+		response = promptResult.response
 	} catch (error) {
 		const promptError = error instanceof Error
 			? error

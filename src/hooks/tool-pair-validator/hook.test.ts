@@ -6,20 +6,25 @@ declare const expect: <T>(value: T) => {
 }
 
 import { createToolPairValidatorHook } from "./hook"
+import { _resetForTesting, subagentSessions } from "../../features/claude-code-session-state/state"
 
 const TOOL_RESULT_PLACEHOLDER = "Tool output unavailable (context compacted)"
+const TOOL_RESULT_RECOVERY_CONTINUATION = "Recovered missing tool results. Continue from the repaired tool output."
 
 type TestPart = {
   type: string
   id?: string
   callID?: string
+  toolUseId?: string
   tool_use_id?: string
-  content?: string
+  isError?: boolean
+  content?: string | Array<{ type: "text"; text: string }>
   text?: string
+  synthetic?: boolean
 }
 
 type TestMessage = {
-  info: { role: "assistant" | "user" }
+  info: { role: "assistant" | "user"; sessionID?: string }
   parts: TestPart[]
 }
 
@@ -64,7 +69,13 @@ describe("createToolPairValidatorHook", () => {
 
     //#then
     expect(messages[1]?.parts).toEqual([
-      { type: "tool_result", tool_use_id: "toolu_1", content: TOOL_RESULT_PLACEHOLDER },
+      {
+        type: "tool_result",
+        toolUseId: "toolu_1",
+        tool_use_id: "toolu_1",
+        isError: true,
+        content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
+      },
       { type: "text", text: "continue" },
     ])
   })
@@ -98,8 +109,25 @@ describe("createToolPairValidatorHook", () => {
       {
         info: { role: "user" },
         parts: [
-          { type: "tool_result", tool_use_id: "toolu_1", content: TOOL_RESULT_PLACEHOLDER },
-          { type: "tool_result", tool_use_id: "toolu_2", content: TOOL_RESULT_PLACEHOLDER },
+          {
+            type: "tool_result",
+            toolUseId: "toolu_1",
+            tool_use_id: "toolu_1",
+            isError: true,
+            content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
+          },
+          {
+            type: "tool_result",
+            toolUseId: "toolu_2",
+            tool_use_id: "toolu_2",
+            isError: true,
+            content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
+          },
+          {
+            type: "text",
+            text: TOOL_RESULT_RECOVERY_CONTINUATION,
+            synthetic: true,
+          },
         ],
       },
     ])
@@ -121,7 +149,17 @@ describe("createToolPairValidatorHook", () => {
       { info: { role: "assistant" }, parts: [{ type: "tool_use", id: "toolu_1" }] },
       {
         info: { role: "user" },
-        parts: [{ type: "tool_result", tool_use_id: "toolu_1", content: TOOL_RESULT_PLACEHOLDER }],
+        parts: [{
+          type: "tool_result",
+          toolUseId: "toolu_1",
+          tool_use_id: "toolu_1",
+          isError: true,
+          content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
+        }, {
+          type: "text",
+          text: TOOL_RESULT_RECOVERY_CONTINUATION,
+          synthetic: true,
+        }],
       },
       { info: { role: "assistant" }, parts: [{ type: "text", text: "follow-up" }] },
     ])
@@ -149,8 +187,79 @@ describe("createToolPairValidatorHook", () => {
     //#then
     expect(messages[1]?.parts).toEqual([
       { type: "tool_result", tool_use_id: "toolu_1", content: "done" },
-      { type: "tool_result", tool_use_id: "call_2", content: TOOL_RESULT_PLACEHOLDER },
+      {
+        type: "tool_result",
+        toolUseId: "call_2",
+        tool_use_id: "call_2",
+        isError: true,
+        content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
+      },
       { type: "text", text: "continue" },
+    ])
+  })
+
+  it("leaves tracked subagent sessions unchanged while normal sessions still repair", async () => {
+    //#given
+    _resetForTesting()
+    subagentSessions.add("ses_background_1")
+    const backgroundMessages = [
+      {
+        info: { role: "assistant", sessionID: "ses_background_1" },
+        parts: [{ type: "tool_use", id: "toolu_background_1" }],
+      },
+      {
+        info: { role: "assistant", sessionID: "ses_background_1" },
+        parts: [{ type: "text", text: "background agent keeps reasoning" }],
+      },
+    ] satisfies TestMessage[]
+    const originalBackgroundMessages = JSON.parse(JSON.stringify(backgroundMessages))
+    const mainMessages = [
+      {
+        info: { role: "assistant", sessionID: "ses_main_1" },
+        parts: [{ type: "tool_use", id: "toolu_main_1" }],
+      },
+      {
+        info: { role: "user", sessionID: "ses_main_1" },
+        parts: [{ type: "text", text: "continue main session" }],
+      },
+    ] satisfies TestMessage[]
+
+    try {
+      //#when
+      await runTransform(backgroundMessages)
+      await runTransform(mainMessages)
+
+      //#then
+      expect(backgroundMessages).toEqual(originalBackgroundMessages)
+      expect(mainMessages[1]?.parts).toEqual([
+        {
+          type: "tool_result",
+          tool_use_id: "toolu_main_1",
+          toolUseId: "toolu_main_1",
+          isError: true,
+          content: [{ type: "text", text: TOOL_RESULT_PLACEHOLDER }],
+        },
+        { type: "text", text: "continue main session" },
+      ])
+    } finally {
+      _resetForTesting()
+    }
+  })
+
+  it("treats existing camelCase toolUseId results as already paired", async () => {
+    //#given
+    const messages = [
+      { info: { role: "assistant" }, parts: [{ type: "tool_use", id: "toolu_1" }] },
+      { info: { role: "user" }, parts: [{ type: "tool_result", toolUseId: "toolu_1", content: [{ type: "text", text: "done" }] }] },
+    ] satisfies TestMessage[]
+
+    //#when
+    await runTransform(messages)
+
+    //#then
+    expect(messages).toEqual([
+      { info: { role: "assistant" }, parts: [{ type: "tool_use", id: "toolu_1" }] },
+      { info: { role: "user" }, parts: [{ type: "tool_result", toolUseId: "toolu_1", content: [{ type: "text", text: "done" }] }] },
     ])
   })
 })

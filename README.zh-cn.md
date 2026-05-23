@@ -1,3 +1,8 @@
+> [!NOTE]
+> **正在进行多 Harness 代理操作系统重构**
+>
+> 我们正在重构代码库以支持多个代理 harness（OpenCode、Codex、Pi 等）。如果您有兴趣贡献，请先阅读 [ROADMAP](./ROADMAP.md)。与 ROADMAP 相关的 PR 请使用 `ROADMAP` 标签。
+
 > [!TIP]
 > **Building in Public**
 >
@@ -26,6 +31,8 @@
 
 <div align="center">
 
+<a href="https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent"><img src="./.github/assets/omo-logo.png" alt="OmO" width="200" /></a>
+
 [![Oh My OpenAgent](./.github/assets/hero.jpg)](https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent)
 
 [![Preview](./.github/assets/omo.png)](https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent)
@@ -50,6 +57,7 @@
 [![GitHub Issues](https://img.shields.io/github/issues/code-yeongyu/oh-my-openagent?color=ff80eb&labelColor=black&style=flat-square)](https://github.com/code-yeongyu/oh-my-openagent/issues)
 [![License](https://img.shields.io/badge/license-SUL--1.0-white?labelColor=black&style=flat-square)](https://github.com/code-yeongyu/oh-my-openagent/blob/dev/LICENSE.md)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/code-yeongyu/oh-my-openagent)
+[![Docs](https://img.shields.io/badge/docs-omo.vibetip.help-369eff?labelColor=black&logo=readthedocs&logoColor=white&style=flat-square)](https://omo.vibetip.help/docs)
 
 [English](README.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [简体中文](README.zh-cn.md)
 
@@ -367,7 +375,7 @@ Agent 会自动顺藤摸瓜加载对应的 Context，免去了你所有的手动
 - **Sisyphus Agent**: 主调度器，搭配 Prometheus（规划师）和 Metis（计划顾问）
 - **后台任务**: 按 provider/model 配置并发上限
 - **类别**: 按领域的任务委托（`visual`、`business-logic`、自定义）
-- **Hooks**: 25+ 内置 Hook，都可以通过 `disabled_hooks` 控制
+- **Hooks**: 54+ 内置生命周期 Hook（启用 Team Mode 时为 61 个），都可以通过 `disabled_hooks` 控制
 - **MCPs**: 内置 websearch（Exa）、context7（文档）、grep_app（GitHub 检索）
 - **LSP**: 包括重构工具的完整 LSP 支持
 - **Experimental**: 激进截断、自动 resume 等
@@ -418,5 +426,6 @@ Agent 会自动顺藤摸瓜加载对应的 Context，免去了你所有的手动
 - [Vercel](https://vercel.com)
 - [ELESTYLE](https://elestyle.jp)
   - 开发了 elepay（全渠道移动支付网关）、OneQR（专为无现金社会打造的移动 SaaS 生态系统）。
+- [Deepgram](https://deepgram.com)
 
 *特别感谢 [@junhoyeo](https://github.com/junhoyeo) 为我们设计的令人惊艳的首图（Hero Image）。*

@@ -29,9 +29,10 @@ You have an active work plan with incomplete tasks. Continue working.
 RULES:
 - **FIRST**: Read the plan file NOW. If the last completed task is still unchecked, mark it \`- [x]\` IMMEDIATELY before anything else
 - Proceed without asking for permission
-- Use the notepad at .sisyphus/notepads/{PLAN_NAME}/ to record learnings
+- Use the notepad at .omo/notepads/{PLAN_NAME}/ to record learnings
 - Do not stop until all tasks are complete
-- If blocked, document the blocker and move to the next task`
+- If a task is blocked by missing external input, unavailable credentials, access limits, or a decision only the user can make, you MUST edit the plan file in this turn and change that task's checkbox from \`- [ ]\` to \`- [~]\` before moving on
+- A text-only explanation of a blocker is NOT progress. The \`- [~]\` checkbox edit is mandatory and must happen via a real file-editing tool call`
 
 export const BOULDER_COMPLETE_PROMPT = `<system-reminder>
 BOULDER COMPLETE: plan "{PLAN_NAME}" is fully checked.
@@ -103,7 +104,7 @@ Answer honestly:
 ALL three must be YES. "Probably" = NO. "I think so" = NO. Investigate until CERTAIN.
 
 - **All 3 YES** - Proceed: mark task complete, move to next.
-- **Any NO** - Reject: resume session with \`session_id\`, fix the specific issue.
+- **Any NO** - Reject: resume with \`task_id\`, fix the specific issue.
 - **Unsure** - Reject: "unsure" = "no". Investigate until you have a definitive answer.
 
 **DO NOT proceed to the next task until all 4 phases are complete and the gate passes.**`
@@ -203,7 +204,7 @@ task(
 \`\`\`
 
 Allowed direct operations:
-- \`.sisyphus/\` files (plans, notepads)
+- \`.omo/\` files (plans, notepads)
 - Reading any file (verification)
 - Running commands (verification)
 

@@ -1,10 +1,13 @@
 /// <reference path="../../../bun-test.d.ts" />
-import { describe, test, expect, mock, beforeEach, spyOn, afterAll } from 'bun:test'
+import { describe, test, expect, mock, beforeEach, spyOn, afterAll, afterEach } from 'bun:test'
 import type { TmuxConfig } from '../../config/schema'
 import type { WindowState, PaneAction } from './types'
 import type { ActionResult, ExecuteContext } from './action-executor'
 import type { TmuxSessionManager as TmuxSessionManagerType, TmuxUtilDeps } from './manager'
 import * as sharedModule from '../../shared'
+import * as sharedTmuxOriginal from '../../shared/tmux'
+
+const sharedTmuxSnapshot = { ...sharedTmuxOriginal }
 
 type ExecuteActionsResult = {
   success: boolean
@@ -95,6 +98,8 @@ const mockTmuxDeps: TmuxUtilDeps = {
   getCurrentPaneId: mockGetCurrentPaneId,
   queryWindowState: mockQueryWindowState,
   waitForSessionReady: mockWaitForSessionReady,
+  executeActions: mockExecuteActions,
+  executeAction: mockExecuteAction,
   log: (...args) => sharedModule.log(...args),
 }
 
@@ -130,6 +135,11 @@ function registerModuleMocks(): void {
 }
 
 afterAll(() => { mock.restore() })
+
+afterEach(() => {
+  mock.restore()
+  mock.module('../../shared/tmux', () => sharedTmuxSnapshot)
+})
 
 const trackedSessions = new Set<string>()
 const readySessions = new Set<string>()
@@ -457,6 +467,69 @@ describe('TmuxSessionManager', () => {
 
       // then
       expect(getManagerInternals(manager).serverUrl).toBe('http://localhost:4096')
+    })
+
+    test('logs a structured warning when ctx.serverUrl has port 0 (#3963)', async () => {
+      // given
+      const previousOpenCodePort = process.env.OPENCODE_PORT
+      delete process.env.OPENCODE_PORT
+      const logCalls: Array<{ message: string; data?: unknown }> = []
+      const trackingDeps: TmuxUtilDeps = {
+        ...mockTmuxDeps,
+        log: (message, data) => { logCalls.push({ message, data }) },
+      }
+      try {
+        mockIsInsideTmux.mockReturnValue(true)
+        const { TmuxSessionManager } = await import('./manager')
+        const ctx = {
+          ...createMockContext(),
+          serverUrl: new URL('http://127.0.0.1:0/'),
+        }
+        const config = createTmuxConfig({ enabled: true })
+
+        // when
+        const manager = new TmuxSessionManager(ctx, config, trackingDeps)
+
+        // then
+        const warning = logCalls.find((entry) => entry.message.includes('ctx.serverUrl has port 0'))
+        expect(warning).toBeDefined()
+        expect(warning?.data).toMatchObject({
+          kind: 'warning',
+          ctxServerUrl: 'http://127.0.0.1:0/',
+          fallbackUrl: 'http://localhost:4096',
+        })
+        expect(manager.getCtxServerUrl()).toBe('http://127.0.0.1:0/')
+      } finally {
+        if (previousOpenCodePort === undefined) {
+          delete process.env.OPENCODE_PORT
+        } else {
+          process.env.OPENCODE_PORT = previousOpenCodePort
+        }
+      }
+    })
+
+    test('does not warn when ctx.serverUrl has a real port', async () => {
+      // given
+      const logCalls: Array<{ message: string; data?: unknown }> = []
+      const trackingDeps: TmuxUtilDeps = {
+        ...mockTmuxDeps,
+        log: (message, data) => { logCalls.push({ message, data }) },
+      }
+      mockIsInsideTmux.mockReturnValue(true)
+      const { TmuxSessionManager } = await import('./manager')
+      const ctx = {
+        ...createMockContext(),
+        serverUrl: new URL('http://127.0.0.1:12345/'),
+      }
+      const config = createTmuxConfig({ enabled: true })
+
+      // when
+      const manager = new TmuxSessionManager(ctx, config, trackingDeps)
+
+      // then
+      const warning = logCalls.find((entry) => entry.message.includes('ctx.serverUrl has port 0'))
+      expect(warning).toBeUndefined()
+      expect(manager.getCtxServerUrl()).toBe('http://127.0.0.1:12345/')
     })
   })
 

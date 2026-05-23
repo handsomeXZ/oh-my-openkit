@@ -1,3 +1,8 @@
+> [!NOTE]
+> **マルチハーネスエージェントOSへのリファクタリング進行中**
+>
+> OpenCode、Codex、Piなどの複数エージェントハーネスをサポートするため、コードベースを再構成しています。貢献に興味がある方は、まず[ROADMAP](./ROADMAP.md)をご確認ください。ROADMAP関連のPRには`ROADMAP`ラベルを付けてください。
+
 > [!TIP]
 > **Building in Public**
 >
@@ -26,6 +31,8 @@
 
 <div align="center">
 
+<a href="https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent"><img src="./.github/assets/omo-logo.png" alt="OmO" width="200" /></a>
+
 [![Oh My OpenAgent](./.github/assets/hero.jpg)](https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent)
 
 [![Preview](./.github/assets/omo.png)](https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent)
@@ -50,6 +57,7 @@
 [![GitHub Issues](https://img.shields.io/github/issues/code-yeongyu/oh-my-openagent?color=ff80eb&labelColor=black&style=flat-square)](https://github.com/code-yeongyu/oh-my-openagent/issues)
 [![License](https://img.shields.io/badge/license-SUL--1.0-white?labelColor=black&style=flat-square)](https://github.com/code-yeongyu/oh-my-openagent/blob/dev/LICENSE.md)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/code-yeongyu/oh-my-openagent)
+[![Docs](https://img.shields.io/badge/docs-omo.vibetip.help-369eff?labelColor=black&logo=readthedocs&logoColor=white&style=flat-square)](https://omo.vibetip.help/docs)
 
 [English](README.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [简体中文](README.zh-cn.md)
 
@@ -367,7 +375,7 @@ oh-my-openagent を削除するには:
 - **Sisyphus エージェント**: Prometheus (プランナー) と Metis (プランコンサルタント) を伴うメインオーケストレーター
 - **バックグラウンドタスク**: プロバイダー/モデル別の同時実行数を設定
 - **カテゴリー**: ドメイン別のタスク委任 (`visual`、`business-logic`、カスタム)
-- **フック**: 25 以上の組み込みフック。すべて `disabled_hooks` で制御可能
+- **フック**: 54 以上の組み込みライフサイクルフック（Team Mode 有効時は 61）。すべて `disabled_hooks` で制御可能
 - **MCP**: 組み込み websearch (Exa)、context7 (ドキュメント)、grep_app (GitHub 検索)
 - **LSP**: リファクタリングツールまで含む完全な LSP サポート
 - **Experimental**: 積極的な truncation、自動 resume など
@@ -418,5 +426,6 @@ OpenCode が Debian/Arch だとすれば、oh-my-openagent は Ubuntu/[Omarchy](
 - [Vercel](https://vercel.com)
 - [ELESTYLE](https://elestyle.jp)
   - マルチモバイル決済ゲートウェイ elepay、キャッシュレスソリューション向けモバイルアプリケーション SaaS OneQR の開発元。
+- [Deepgram](https://deepgram.com)
 
 *素晴らしいヒーロー画像を提供してくれた [@junhoyeo](https://github.com/junhoyeo) 氏に特別な感謝を。*

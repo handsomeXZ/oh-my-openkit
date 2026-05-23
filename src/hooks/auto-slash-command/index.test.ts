@@ -1,18 +1,17 @@
-import { describe, expect, it, beforeEach, afterEach, spyOn, mock } from "bun:test"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { clearCommandLoaderCache } from "../../features/claude-code-command-loader"
 import type { LoadedSkill } from "../../features/opencode-skill-loader/types"
+// Import real shared module to avoid mock leaking to other test files
+import * as shared from "../../shared"
 import type {
   AutoSlashCommandHookInput,
   AutoSlashCommandHookOutput,
   CommandExecuteBeforeInput,
   CommandExecuteBeforeOutput,
 } from "./types"
-
-// Import real shared module to avoid mock leaking to other test files
-import * as shared from "../../shared"
 
 type AutoSlashCommandModule = typeof import("./hook")
 
@@ -356,6 +355,22 @@ describe("createAutoSlashCommandHook", () => {
       expect(output.parts[0].text).toContain("/ralph-loop Command")
     })
 
+    it("should not duplicate injection when command output is already tagged", async () => {
+      //#given
+      const hook = createAutoSlashCommandHook()
+      const input = createCommandInput("ralph-loop")
+      const taggedContent = "<auto-slash-command>\n/ralph-loop Command\n</auto-slash-command>"
+      const output = createCommandOutput(taggedContent)
+
+      //#when
+      await hook["command.execute.before"](input, output)
+
+      //#then
+      expect(output.parts).toHaveLength(1)
+      expect(output.parts[0]?.text).toBe(taggedContent)
+      expect(output.parts[0]?.text?.split("<auto-slash-command>").length).toBe(2)
+    })
+
     it("should inject template for known builtin commands like ulw-loop", async () => {
       //#given
       const hook = createAutoSlashCommandHook()
@@ -391,6 +406,25 @@ describe("createAutoSlashCommandHook", () => {
       ])
     })
 
+    it("should not duplicate injection when parts already contain auto-slash-command tags (#3724)", async () => {
+      //#given - parts already have tags (as if chat.message hook already ran)
+      const hook = createAutoSlashCommandHook()
+      const input = createCommandInput("ralph-loop")
+      const alreadyTagged = "<auto-slash-command>\n/ralph-loop Command\n## Command Instructions\ntemplate content\n</auto-slash-command>"
+      const output: CommandExecuteBeforeOutput = {
+        parts: [{ type: "text", text: alreadyTagged }],
+      }
+
+      //#when
+      await hook["command.execute.before"](input, output)
+
+      //#then - parts unchanged, no second injection
+      expect(output.parts).toHaveLength(1)
+      expect(output.parts[0].text).toBe(alreadyTagged)
+      const tagCount = (output.parts[0].text?.split("<auto-slash-command>").length ?? 1) - 1
+      expect(tagCount).toBe(1)
+    })
+
   })
   describe("skills as slash commands", () => {
     function createTestSkill(name: string, template: string): LoadedSkill {
@@ -421,6 +455,25 @@ describe("createAutoSlashCommandHook", () => {
       expect(output.parts[0].text).toContain("<auto-slash-command>")
       expect(output.parts[0].text).toContain("/my-test-skill Command")
       expect(output.parts[0].text).toContain("This is the skill template content")
+    })
+
+    it("does not replace synthetic slash text with a skill template", async () => {
+      // given
+      const skill = createTestSkill("my-test-skill", "This is the skill template content")
+      const hook = createAutoSlashCommandHook({ skills: [skill] })
+      const sessionID = `test-session-skill-synthetic-${Date.now()}`
+      const input = createMockInput(sessionID)
+      const output: AutoSlashCommandHookOutput = {
+        message: {},
+        parts: [{ type: "text", text: "/my-test-skill some arguments", synthetic: true }],
+      }
+      const originalText = output.parts[0].text
+
+      // when
+      await hook["chat.message"](input, output)
+
+      // then
+      expect(output.parts[0].text).toBe(originalText)
     })
 
     it("should inject skill template via command.execute.before", async () => {

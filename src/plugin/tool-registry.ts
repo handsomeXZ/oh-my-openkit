@@ -25,7 +25,6 @@ import * as openclawRuntimeDispatch from "../openclaw/runtime-dispatch"
 import type { PluginContext, ToolsRecord } from "./types"
 
 import {
-  builtinTools,
   createBackgroundTools,
   createCallOmoAgent,
   createLookAt,
@@ -33,7 +32,6 @@ import {
   createSkillTool,
   createGrepTools,
   createGlobTools,
-  createAstGrepTools,
   createSessionManagerTools,
   createDelegateTask,
   discoverCommandsSync,
@@ -53,7 +51,6 @@ import type { SkillContext } from "./skill-context"
 import { normalizeToolArgSchemas } from "./normalize-tool-arg-schemas"
 
 type ToolRegistryFactories = {
-  builtinTools: typeof builtinTools
   createBackgroundTools: typeof createBackgroundTools
   createCallOmoAgent: typeof createCallOmoAgent
   createLookAt: typeof createLookAt
@@ -61,7 +58,6 @@ type ToolRegistryFactories = {
   createSkillTool: typeof createSkillTool
   createGrepTools: typeof createGrepTools
   createGlobTools: typeof createGlobTools
-  createAstGrepTools: typeof createAstGrepTools
   createSessionManagerTools: typeof createSessionManagerTools
   createDelegateTask: typeof createDelegateTask
   discoverCommandsSync: typeof discoverCommandsSync
@@ -86,7 +82,6 @@ type ToolRegistryFactories = {
 }
 
 const defaultToolRegistryFactories: ToolRegistryFactories = {
-  builtinTools,
   createBackgroundTools,
   createCallOmoAgent,
   createLookAt,
@@ -94,7 +89,6 @@ const defaultToolRegistryFactories: ToolRegistryFactories = {
   createSkillTool,
   createGrepTools,
   createGlobTools,
-  createAstGrepTools,
   createSessionManagerTools,
   createDelegateTask,
   discoverCommandsSync,
@@ -232,6 +226,7 @@ export function createToolRegistry(args: {
     teamModeEnabled: pluginConfig.team_mode?.enabled ?? false,
     availableCategories,
     availableSkills: skillContext.availableSkills,
+    nativeSkills: "skills" in ctx ? (ctx as { skills: SkillLoadOptions["nativeSkills"] }).skills : undefined,
     sisyphusAgentConfig: pluginConfig.sisyphus_agent,
     syncPollTimeoutMs: pluginConfig.background_task?.syncPollTimeoutMs,
     modelFallbackControllerAccessor: managers.modelFallbackControllerAccessor,
@@ -279,6 +274,7 @@ export function createToolRegistry(args: {
     enabledPluginsOverride: pluginConfig.claude_code?.plugins_override,
   })
   const skillTool = factories.createSkillTool({
+    directory: ctx.directory,
     commands,
     skills: skillContext.mergedSkills,
     mcpManager: managers.skillMcpManager,
@@ -339,10 +335,8 @@ export function createToolRegistry(args: {
     : {}
 
   const allTools: Record<string, ToolDefinition> = {
-    ...factories.builtinTools,
     ...factories.createGrepTools(ctx),
     ...factories.createGlobTools(ctx),
-    ...factories.createAstGrepTools(ctx),
     ...factories.createSessionManagerTools(ctx),
     ...backgroundTools,
     call_omo_agent: callOmoAgent,
@@ -355,6 +349,14 @@ export function createToolRegistry(args: {
     ...taskToolsRecord,
     ...hashlineToolsRecord,
   }
+
+  const allToolNames = Object.keys(allTools)
+  const teamToolCount = allToolNames.filter((toolName) => toolName.startsWith("team_")).length
+  log("[tool-registry] Built tool registry", {
+    totalTools: allToolNames.length,
+    teamModeEnabled: pluginConfig.team_mode?.enabled ?? false,
+    teamToolCount,
+  })
 
   for (const toolDefinition of Object.values(allTools)) {
     normalizeToolArgSchemas(toolDefinition)

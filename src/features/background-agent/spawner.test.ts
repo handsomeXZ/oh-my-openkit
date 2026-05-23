@@ -1,14 +1,35 @@
-import { describe, test, expect, mock, afterEach } from "bun:test"
-import { createTask, startTask } from "./spawner"
-import type { BackgroundTask } from "./types"
+import { afterEach, describe, expect, mock, test } from "bun:test"
 import {
   clearSessionPromptParams,
   getSessionPromptParams,
 } from "../../shared/session-prompt-params-state"
+import { releaseAllPromptAsyncReservationsForTesting } from "../../shared/prompt-async-gate"
+import { createTask, startTask } from "./spawner"
+import type { BackgroundTask } from "./types"
+
+/**
+ * Poll until `fn()` returns true or timeout elapses.
+ * Replaces fixed `setTimeout(resolve, 50)` waits that cause flaky CI failures
+ * when the fire-and-forget prompt chain hasn't settled in time.
+ */
+async function waitForCondition(
+  fn: () => boolean,
+  timeoutMs = 2000,
+  intervalMs = 10,
+): Promise<void> {
+  const start = Date.now()
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitForCondition timed out after ${timeoutMs}ms`)
+    }
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
 
 describe("background-agent spawner agent-not-found fallback", () => {
   afterEach(() => {
     clearSessionPromptParams("session-fallback")
+    releaseAllPromptAsyncReservationsForTesting()
   })
 
   test("retries with 'general' agent when promptAsync fails with Agent not found", async () => {
@@ -67,7 +88,7 @@ describe("background-agent spawner agent-not-found fallback", () => {
     await startTask(item as never, ctx as never)
 
     // Wait for the fire-and-forget prompt chain to settle
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitForCondition(() => promptCalls.length >= 2)
 
     //#then
     // Should have called promptAsync twice: once with original agent, once with fallback
@@ -146,7 +167,7 @@ describe("background-agent spawner agent-not-found fallback", () => {
 
     //#when
     await startTask(item as never, ctx as never)
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitForCondition(() => onTaskError.mock.calls.length > 0)
 
     //#then
     // Only one attempt — no retry for non-agent errors
@@ -199,7 +220,7 @@ describe("background-agent spawner agent-not-found fallback", () => {
 
     //#when
     await startTask(item as never, ctx as never)
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitForCondition(() => onTaskError.mock.calls.length > 0)
 
     //#then
     // Verify retry was attempted (2 calls: original + fallback)
@@ -261,7 +282,7 @@ describe("background-agent spawner agent-not-found fallback", () => {
 
     //#when
     await startTask(item as never, ctx as never)
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitForCondition(() => promptCalls.length >= 2)
 
     //#then
     expect(promptCalls).toHaveLength(2)
@@ -324,7 +345,7 @@ describe("background-agent spawner agent-not-found fallback", () => {
 
     //#when
     await startTask(item as never, ctx as never)
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitForCondition(() => promptCalls.length >= 2)
 
     //#then
     expect(promptCalls).toHaveLength(2)
@@ -693,6 +714,67 @@ describe("background-agent spawner fallback model promotion", () => {
     //#then
     expect(promptCalls).toHaveLength(1)
     expect(promptCalls[0]?.body?.agent).toBe("Hephaestus - Deep Agent")
+  })
+
+  test("persists the same normalized agent used by promptAsync into session-agent state (GH-3259 follow-up)", async () => {
+    //#given - ZWSP+sort-prefix wrapped agent name
+    const promptCalls: Array<{ body?: { agent?: string } }> = []
+    const sessionID = "ses_child_normalized"
+    const wrappedAgent = "\u200B\u200B5|Hephaestus - Deep Agent"
+
+    const client = {
+      session: {
+        get: async () => ({ data: { directory: "/parent/dir" } }),
+        create: async () => ({ data: { id: sessionID } }),
+        promptAsync: async (args?: { body?: { agent?: string } }) => {
+          promptCalls.push(args ?? {})
+          return {}
+        },
+      },
+    }
+
+    const { _resetForTesting: resetState, getSessionAgent } = await import("../claude-code-session-state")
+    resetState()
+
+    const task = createTask({
+      description: "Normalized agent storage",
+      prompt: "Do work",
+      agent: wrappedAgent,
+      parentSessionId: "ses_parent",
+      parentMessageId: "msg_parent",
+    })
+
+    const item = {
+      task,
+      input: {
+        description: task.description,
+        prompt: task.prompt,
+        agent: task.agent,
+        parentSessionId: task.parentSessionId,
+        parentMessageId: task.parentMessageId,
+        parentModel: task.parentModel,
+        parentAgent: task.parentAgent,
+        model: task.model,
+      },
+    }
+
+    const ctx = {
+      client,
+      directory: "/fallback",
+      concurrencyManager: { release: () => {} },
+      tmuxEnabled: false,
+      onTaskError: () => {},
+    }
+
+    //#when
+    await startTask(item as never, ctx as never)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    //#then
+    expect(promptCalls).toHaveLength(1)
+    const dispatchedAgent = promptCalls[0]?.body?.agent
+    expect(dispatchedAgent).toBe("Hephaestus - Deep Agent")
+    expect(getSessionAgent(sessionID)).toBe(dispatchedAgent)
   })
 })
 

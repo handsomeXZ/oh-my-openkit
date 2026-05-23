@@ -2,9 +2,9 @@
 
 import { mock } from "bun:test"
 import { randomUUID } from "node:crypto"
+import { Effect } from "effect"
 
 import type { ToolContext } from "@opencode-ai/plugin/tool"
-import { Effect } from "effect"
 
 import { TeamModeConfigSchema } from "../../../config/schema/team-mode"
 import type { OpencodeClient } from "../../../tools/delegate-task/types"

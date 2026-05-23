@@ -9,7 +9,7 @@ export function createPluginDispose(args: {
   skillMcpManager: {
     disconnectAll: () => Promise<void>
   }
-  serenaServiceManager: {
+  serenaServiceManager?: {
     dispose: () => Promise<void>
   }
   lspManager?: {
@@ -38,7 +38,7 @@ export function createPluginDispose(args: {
         log("[plugin-dispose] skillMcpManager.disconnectAll() error:", error)
       }
       try {
-        await serenaServiceManager.dispose()
+        await serenaServiceManager?.dispose()
       } catch (error) {
         log("[plugin-dispose] serenaServiceManager.dispose() error:", error)
       }

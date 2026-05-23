@@ -1,3 +1,8 @@
+> [!NOTE]
+> **멀티 하니스 에이전트 OS 리팩토링 진행 중**
+>
+> OpenCode, Codex, Pi 등 여러 에이전트 하니스를 지원하기 위해 코드베이스를 재구성하고 있습니다. 기여에 관심이 있다면 먼저 [ROADMAP](./ROADMAP.md)을 확인해 주세요. ROADMAP 관련 PR에는 `ROADMAP` 라벨을 붙여 주세요.
+
 > [!TIP]
 > **Building in Public**
 >
@@ -25,6 +30,8 @@
 
 <div align="center">
 
+<a href="https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent"><img src="./.github/assets/omo-logo.png" alt="OmO" width="200" /></a>
+
 [![Oh My OpenAgent](./.github/assets/hero.jpg)](https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent)
 
 [![Preview](./.github/assets/omo.png)](https://github.com/code-yeongyu/oh-my-openagent#oh-my-openagent)
@@ -49,6 +56,7 @@
 [![GitHub Issues](https://img.shields.io/github/issues/code-yeongyu/oh-my-openagent?color=ff80eb&labelColor=black&style=flat-square)](https://github.com/code-yeongyu/oh-my-openagent/issues)
 [![License](https://img.shields.io/badge/license-SUL--1.0-white?labelColor=black&style=flat-square)](https://github.com/code-yeongyu/oh-my-openagent/blob/dev/LICENSE.md)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/code-yeongyu/oh-my-openagent)
+[![Docs](https://img.shields.io/badge/docs-omo.vibetip.help-369eff?labelColor=black&logo=readthedocs&logoColor=white&style=flat-square)](https://omo.vibetip.help/docs)
 
 [English](README.md) | [한국어](README.ko.md) | [日本語](README.ja.md) | [简体中文](README.zh-cn.md)
 
@@ -368,7 +376,7 @@ oh-my-openagent를 제거하려면:
 - **Sisyphus Agent**: Prometheus(플래너), Metis(플랜 컨설턴트)와 함께 도는 메인 오케스트레이터
 - **Background Tasks**: 프로바이더/모델별 동시성 제한 설정
 - **Categories**: 도메인별 태스크 위임(`visual`, `business-logic`, 커스텀)
-- **Hooks**: 25개 이상의 빌트인 hook, `disabled_hooks`로 전부 제어 가능
+- **Hooks**: 54개 이상의 라이프사이클 hook (Team Mode 활성화 시 61개), 전부 `disabled_hooks`로 제어 가능
 - **MCPs**: 빌트인 websearch(Exa), context7(문서), grep_app(GitHub 검색)
 - **LSP**: 리팩터링 도구까지 포함한 풀 LSP 지원
 - **Experimental**: 공격적 truncation, 자동 재개 등
@@ -419,5 +427,6 @@ OpenCode가 Debian/Arch라면, oh-my-openagent는 Ubuntu/[Omarchy](https://omarc
 - [Vercel](https://vercel.com)
 - [ELESTYLE](https://elestyle.jp)
   - elepay(멀티 모바일 결제 게이트웨이), OneQR(캐시리스 솔루션용 모바일 앱 SaaS) 개발사.
+- [Deepgram](https://deepgram.com)
 
 *훌륭한 hero 이미지를 만들어준 [@junhoyeo](https://github.com/junhoyeo)에게 특별히 감사드립니다.*

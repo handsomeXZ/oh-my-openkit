@@ -61,6 +61,7 @@ export function createTransformHooks(args: {
             contextCollector,
             ralphLoop ?? undefined,
             pluginConfig.keyword_detector,
+            pluginConfig.default_mode,
           ),
         { enabled: safeHookEnabled },
       )
@@ -74,7 +75,7 @@ export function createTransformHooks(args: {
   const teamModeStatusInjector = teamModeConfig?.enabled
     ? safeCreateHook(
         "team-mode-status-injector",
-        () => createTeamModeStatusInjector(teamModeConfig),
+        () => createTeamModeStatusInjector(teamModeConfig, pluginConfig.keyword_detector),
         { enabled: safeHookEnabled },
       )
     : null

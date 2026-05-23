@@ -1,8 +1,9 @@
 import type { KeywordType } from "../../config/schema/keyword-detector"
+import { isRealUserTextPart } from "../../shared/internal-initiator-marker"
 import {
-  KEYWORD_DETECTORS,
   CODE_BLOCK_PATTERN,
   INLINE_CODE_PATTERN,
+  KEYWORD_DETECTORS,
 } from "./constants"
 
 export interface DetectedKeyword {
@@ -33,8 +34,9 @@ export function detectKeywords(
   agentName?: string,
   modelID?: string,
   disabledKeywords?: ReadonlyArray<KeywordType>,
+  enabledExpansions?: ReadonlyArray<KeywordType>,
 ): string[] {
-  return detectKeywordsWithType(text, agentName, modelID, disabledKeywords).map(
+  return detectKeywordsWithType(text, agentName, modelID, disabledKeywords, enabledExpansions).map(
     ({ message }) => message,
   )
 }
@@ -44,6 +46,7 @@ export function detectKeywordsWithType(
   agentName?: string,
   modelID?: string,
   disabledKeywords?: ReadonlyArray<KeywordType>,
+  enabledExpansions?: ReadonlyArray<KeywordType>,
 ): DetectedKeyword[] {
   const textWithoutCode = removeCodeBlocks(text)
   const disabled = new Set<KeywordType>(disabledKeywords ?? [])
@@ -51,20 +54,27 @@ export function detectKeywordsWithType(
   if (disabled.has("ultrawork") || disabled.has("hyperplan")) {
     disabled.add("hyperplan-ultrawork")
   }
+  // Allowlist: if enabledExpansions is set, only those types fire
+  const allowlist = enabledExpansions ? new Set<KeywordType>(enabledExpansions) : null
   return KEYWORD_DETECTORS.map(({ type, pattern, message }) => ({
     matches: pattern.test(textWithoutCode),
     type,
     message: resolveMessage(message, agentName, modelID),
   }))
-    .filter((result) => result.matches && !disabled.has(result.type))
+    .filter((result) => {
+      if (!result.matches) return false
+      if (allowlist && !allowlist.has(result.type)) return false
+      if (disabled.has(result.type)) return false
+      return true
+    })
     .map(({ type, message }) => ({ type, message }))
 }
 
 export function extractPromptText(
-  parts: Array<{ type: string; text?: string }>
+  parts: Array<{ type: string; text?: string; synthetic?: boolean }>
 ): string {
   return parts
-    .filter((p) => p.type === "text")
+    .filter(isRealUserTextPart)
     .map((p) => p.text || "")
     .join(" ")
 }

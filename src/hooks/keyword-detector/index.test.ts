@@ -1,13 +1,14 @@
 /// <reference types="bun-types" />
 
-import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import type { PluginInput } from "@opencode-ai/plugin"
-import { createKeywordDetectorHook } from "./index"
-import { setMainSession, updateSessionAgent, clearSessionAgent, _resetForTesting } from "../../features/claude-code-session-state"
+import { unsafeTestValue } from "../../../test-support/unsafe-test-value"
+import * as sessionState from "../../features/claude-code-session-state"
+import { _resetForTesting, clearSessionAgent, setMainSession, updateSessionAgent } from "../../features/claude-code-session-state"
 import { ContextCollector } from "../../features/context-injector"
 import * as sharedModule from "../../shared"
-import * as sessionState from "../../features/claude-code-session-state"
-import { unsafeTestValue } from "../../../test-support/unsafe-test-value"
+import { OMO_INTERNAL_INITIATOR_MARKER } from "../../shared/internal-initiator-marker"
+import { createKeywordDetectorHook } from "./index"
 
 type ToastOptions = { body: { title: string } }
 
@@ -133,6 +134,151 @@ describe("keyword-detector message transform", () => {
     const textPart = output.parts.find(p => p.type === "text")
     expect(textPart).toBeDefined()
     expect(textPart!.text).toBe("just a normal message")
+  })
+
+  test("should not prepend mode instructions to synthetic team peer messages", async () => {
+    // given - team mailbox injection created a synthetic peer message containing search keywords
+    const collector = new ContextCollector()
+    const sessionID = "synthetic-peer-message-session"
+    getMainSessionSpy = spyOn(sessionState, "getMainSessionID").mockReturnValue(sessionID)
+    const hook = createKeywordDetectorHook(createMockPluginInput(), collector)
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{
+        type: "text",
+        synthetic: true,
+        text: '<peer_message from="researcher">search the issue thread and report findings</peer_message>',
+      }],
+    }
+
+    // when - keyword detection sees the synthetic peer message
+    await hook["chat.message"]({ sessionID }, output)
+
+    // then - peer message content is preserved without search-mode becoming part of the user turn
+    const textPart = output.parts.find((part) => part.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart?.text).toBe('<peer_message from="researcher">search the issue thread and report findings</peer_message>')
+    expect(textPart?.text).not.toContain("[search-mode]")
+  })
+
+  test("should not prepend mode instructions to internally marked peer messages", async () => {
+    // given - an internal peer message contains a search keyword but is not user intent
+    const collector = new ContextCollector()
+    const sessionID = "internal-peer-message-session"
+    getMainSessionSpy = spyOn(sessionState, "getMainSessionID").mockReturnValue(sessionID)
+    const hook = createKeywordDetectorHook(createMockPluginInput(), collector)
+    const peerText = `<peer_message from="researcher">search the issue thread</peer_message>\n${OMO_INTERNAL_INITIATOR_MARKER}`
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: peerText }],
+    }
+
+    // when
+    await hook["chat.message"]({ sessionID }, output)
+
+    // then
+    const textPart = output.parts.find((part) => part.type === "text")
+    expect(textPart?.text).toBe(peerText)
+    expect(textPart?.text).not.toContain("[search-mode]")
+  })
+
+  test("should only fire ultrawork when enabled_expansions is set to [ultrawork]", async () => {
+    // given - allowlist configured to only enable ultrawork
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(
+      createMockPluginInput(),
+      collector,
+      undefined,
+      { enabled_expansions: ["ultrawork"] }
+    )
+    const sessionID = "enabled-expansions-ultrawork-only"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "search for the bug" }],
+    }
+
+    // when - keyword detection runs with enabled_expansions restricting to ultrawork
+    await hook["chat.message"]({ sessionID }, output)
+
+    // then - search should be blocked by allowlist even though it matches
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toBe("search for the bug") // no search-mode injection
+  })
+
+  test("should fire only allowed expansions from allowlist", async () => {
+    // given - allowlist configured to only enable analyze
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(
+      createMockPluginInput(),
+      collector,
+      undefined,
+      { enabled_expansions: ["analyze"] }
+    )
+    const sessionID = "enabled-expansions-analyze-only"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "investigate the bug" }],
+    }
+
+    // when - keyword detection runs with enabled_expansions restricting to analyze
+    await hook["chat.message"]({ sessionID }, output)
+
+    // then - analyze should fire because it's in the allowlist
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toContain("[analyze-mode]")
+  })
+
+  test("should block all expansions when enabled_expansions is empty array", async () => {
+    // given - empty allowlist (effectively disable all)
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(
+      createMockPluginInput(),
+      collector,
+      undefined,
+      { enabled_expansions: [] }
+    )
+    const sessionID = "enabled-expansions-empty"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "ultrawork fix the bug" }],
+    }
+
+    // when - keyword detection runs with empty enabled_expansions
+    await hook["chat.message"]({ sessionID }, output)
+
+    // then - ultrawork should not fire
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toBe("ultrawork fix the bug") // no mode injection
+  })
+
+  test("should allow both allowlist and denylist to coexist", async () => {
+    // given - allowlist enables ultrawork and search, but denylist also blocks search
+    const collector = new ContextCollector()
+    const hook = createKeywordDetectorHook(
+      createMockPluginInput(),
+      collector,
+      undefined,
+      { enabled_expansions: ["ultrawork", "search"], disabled_keywords: ["search"] }
+    )
+    const sessionID = "enabled-and-disabled-coexist"
+    const output = {
+      message: {} as Record<string, unknown>,
+      parts: [{ type: "text", text: "search for the bug" }],
+    }
+
+    // when - both config fields are set
+    await hook["chat.message"]({ sessionID }, output)
+
+    // then - search blocked by both allowlist (allowed) AND denylist (blocked)
+    // Actually search is in enabled_expansions so it would fire, but disabled_keywords blocks it
+    // Wait, let me reconsider: with enabled_expansions=["ultrawork", "search"], search passes the allowlist.
+    // Then disabled_keywords=["search"] blocks it. So no injection.
+    const textPart = output.parts.find(p => p.type === "text")
+    expect(textPart).toBeDefined()
+    expect(textPart!.text).toBe("search for the bug")
   })
 })
 

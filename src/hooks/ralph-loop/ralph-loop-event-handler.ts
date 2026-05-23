@@ -1,8 +1,9 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import { log } from "../../shared/logger"
+import { isRecord } from "../../shared/record-type-guard"
 import { resolveMessageEventSessionID, resolveSessionEventID } from "../../shared/event-session-id"
 import { isSessionActive } from "../shared/session-idle-settle"
-import type { RalphLoopOptions, RalphLoopState } from "./types"
+import type { IterationCommitExpectation, RalphLoopOptions, RalphLoopState } from "./types"
 import { HOOK_NAME } from "./constants"
 import { handleDetectedCompletion } from "./completion-handler"
 import {
@@ -14,11 +15,12 @@ import { handlePendingVerification } from "./pending-verification-handler"
 import { handleDeletedLoopSession, handleErroredLoopSession } from "./session-event-handler"
 
 const RAPID_IDLE_DEDUP_MS = 500
+const USER_MESSAGE_IN_PROGRESS_WINDOW_MS = 2000
 
 type LoopStateController = {
 	getState: () => RalphLoopState | null
 	clear: () => boolean
-	incrementIteration: () => RalphLoopState | null
+	incrementIteration: (expected?: IterationCommitExpectation) => RalphLoopState | null
 	setSessionID: (sessionID: string) => RalphLoopState | null
 	markVerificationPending: (sessionID: string) => RalphLoopState | null
 	setVerificationSessionID: (sessionID: string, verificationSessionID: string) => RalphLoopState | null
@@ -74,6 +76,78 @@ function isAbortError(error: unknown): boolean {
 		&& error !== null
 		&& "name" in error
 		&& (error as { name?: unknown }).name === "MessageAbortedError"
+}
+
+function getMessagesData(response: unknown): unknown[] {
+	if (Array.isArray(response)) {
+		return response
+	}
+	if (isRecord(response) && Array.isArray(response.data)) {
+		return response.data
+	}
+	return []
+}
+
+function getMessageRole(message: unknown): string | undefined {
+	if (!isRecord(message)) return undefined
+	const info = isRecord(message.info) ? message.info : undefined
+	return typeof info?.role === "string"
+		? info.role
+		: typeof message.role === "string"
+			? message.role
+			: undefined
+}
+
+function parseMessageCreatedAt(value: unknown): number | undefined {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return value
+	}
+	if (typeof value === "string") {
+		const parsed = Date.parse(value)
+		return Number.isFinite(parsed) ? parsed : undefined
+	}
+	if (value instanceof Date) {
+		return value.getTime()
+	}
+	return undefined
+}
+
+function getMessageCreatedAt(message: unknown): number | undefined {
+	if (!isRecord(message)) return undefined
+	const info = isRecord(message.info) ? message.info : undefined
+	const infoTime = isRecord(info?.time) ? info.time : undefined
+	const messageTime = isRecord(message.time) ? message.time : undefined
+	return parseMessageCreatedAt(infoTime?.created ?? messageTime?.created)
+}
+
+async function latestUserMessageIsInProgress(
+	ctx: PluginInput,
+	options: RalphLoopEventHandlerOptions,
+	sessionID: string,
+	now: number,
+): Promise<boolean> {
+	try {
+		const messagesResponse = await ctx.client.session.messages({
+			path: { id: sessionID },
+			query: { directory: options.directory },
+		})
+		const messages = getMessagesData(messagesResponse)
+		for (let index = messages.length - 1; index >= 0; index--) {
+			const message = messages[index]
+			const role = getMessageRole(message)
+			if (role === "user") {
+				const createdAt = getMessageCreatedAt(message)
+				return createdAt !== undefined && now - createdAt <= USER_MESSAGE_IN_PROGRESS_WINDOW_MS
+			}
+			if (role === "assistant" || role === "tool") {
+				return false
+			}
+		}
+		return false
+	} catch (error) {
+		log(`[${HOOK_NAME}] Failed to inspect recent user activity`, { sessionID, error: String(error) })
+		return false
+	}
 }
 
 function showToastBestEffort(
@@ -332,6 +406,10 @@ export function createRalphLoopEventHandler(
 					log(`[${HOOK_NAME}] Skipped: session became active during settle window`, { sessionID })
 					return
 				}
+				if (await latestUserMessageIsInProgress(ctx, options, sessionID, Date.now())) {
+					log(`[${HOOK_NAME}] Skipped: recent user message is still in progress`, { sessionID })
+					return
+				}
 				if (stateAfterSettle.verification_pending) {
 					log(`[${HOOK_NAME}] Skipped: state entered verification_pending during settle window`, { sessionID })
 					return
@@ -358,6 +436,7 @@ export function createRalphLoopEventHandler(
 					previousSessionID: sessionID,
 					directory: options.directory,
 					apiTimeoutMs: options.apiTimeoutMs,
+					idleSettleMs: options.idleSettleMs,
 					loopState: options.loopState,
 				})
 
@@ -377,12 +456,26 @@ export function createRalphLoopEventHandler(
 						return
 					}
 
-					const committed = options.loopState.incrementIteration()
+					const committed = options.loopState.incrementIteration({
+						iteration: stateBeforeCommit.iteration,
+						sessionID: result.sessionID,
+					})
 					if (committed) {
 						showIterationToast(ctx, committed)
 					} else {
 						log(`[${HOOK_NAME}] Dispatch succeeded but iteration commit failed`, { sessionID })
+						options.loopState.clear()
+						showToastBestEffort(ctx, {
+							title: "Ralph Loop Failed",
+							message: "Dispatch succeeded but iteration commit failed",
+							variant: "warning",
+							duration: 5000,
+						})
 					}
+					return
+				}
+				if (result.status === "dispatch_deferred") {
+					log(`[${HOOK_NAME}] Dispatch deferred`, { sessionID, reason: result.reason })
 					return
 				}
 
@@ -493,6 +586,10 @@ export function createRalphLoopEventHandler(
 					log(`[${HOOK_NAME}] Skipped: session became active during settle window`, { sessionID })
 					return
 				}
+				if (await latestUserMessageIsInProgress(ctx, options, sessionID, Date.now())) {
+					log(`[${HOOK_NAME}] Skipped: recent user message is still in progress after runtime error`, { sessionID })
+					return
+				}
 				if (stateAfterSettle.verification_pending) {
 					log(`[${HOOK_NAME}] Skipped: state entered verification_pending during settle window`, { sessionID })
 					return
@@ -513,6 +610,7 @@ export function createRalphLoopEventHandler(
 					previousSessionID: sessionID,
 					directory: options.directory,
 					apiTimeoutMs: options.apiTimeoutMs,
+					idleSettleMs: options.idleSettleMs,
 					loopState: options.loopState,
 				})
 
@@ -532,13 +630,27 @@ export function createRalphLoopEventHandler(
 						return
 					}
 
-					const committed = options.loopState.incrementIteration()
+					const committed = options.loopState.incrementIteration({
+						iteration: stateBeforeCommit.iteration,
+						sessionID: result.sessionID,
+					})
 					if (committed) {
 						showIterationToast(ctx, committed)
 						runtimeErrorRetriedSessions.set(sessionID, committed.iteration)
 					} else {
 						log(`[${HOOK_NAME}] Dispatch succeeded but iteration commit failed after runtime error`, { sessionID })
+						options.loopState.clear()
+						showToastBestEffort(ctx, {
+							title: "Ralph Loop Failed",
+							message: "Dispatch succeeded but iteration commit failed",
+							variant: "warning",
+							duration: 5000,
+						})
 					}
+					return
+				}
+				if (result.status === "dispatch_deferred") {
+					log(`[${HOOK_NAME}] Dispatch deferred after runtime error`, { sessionID, reason: result.reason })
 					return
 				}
 

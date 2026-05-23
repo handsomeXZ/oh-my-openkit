@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+import { releaseAllPromptAsyncReservationsForTesting } from "../shared/prompt-async-gate"
 import { injectContinuationPrompt } from "./continuation-prompt-injector"
 
 describe("ralph-loop continuation prompt injector", () => {
+  afterEach(() => {
+    releaseAllPromptAsyncReservationsForTesting()
+  })
+
   test("#given promptAsync resolves SDK error #when injecting continuation prompt #then it returns rejection without throwing", async () => {
     // given
     const ctx = {
@@ -59,7 +64,33 @@ describe("ralph-loop continuation prompt injector", () => {
     }
   })
 
-  test("#given inherited message agent has ZWSP prefix #when injecting continuation prompt #then promptAsync receives normalized agent", async () => {
+  test("#given promptAsync may have accepted before EOF #when injecting continuation prompt #then it returns dispatched", async () => {
+    // given
+    const ctx = {
+      client: {
+        session: {
+          messages: async () => ({ data: [] }),
+          promptAsync: async () => {
+            throw new Error("JSON Parse error: Unexpected EOF")
+          },
+        },
+      },
+    }
+
+    // when
+    const result = await injectContinuationPrompt(ctx as never, {
+      sessionID: "ses_ralph_eof",
+      prompt: "continue",
+      directory: "/tmp/test",
+      apiTimeoutMs: 50,
+    })
+
+    // then
+    expect(result.status).toBe("dispatched")
+  })
+
+
+  test("#given inherited message agent has ZWSP prefix #when injecting continuation prompt #then promptAsync receives registered display agent", async () => {
     // given
     let promptBody: { agent?: string; noReply?: boolean } | undefined
     let promptPart:
@@ -103,14 +134,14 @@ describe("ralph-loop continuation prompt injector", () => {
     })
 
     // then
-    expect(promptBody?.agent).toBe("sisyphus")
+    expect(promptBody?.agent).toBe("Sisyphus - Ultraworker")
     expect(promptBody?.agent).not.toContain("\u200b")
     expect(promptBody?.noReply).toBeUndefined()
     expect(promptPart?.synthetic).toBe(true)
     expect(promptPart?.metadata?.compaction_continue).toBe(true)
   })
 
-  test("#given inherited message agent has no ZWSP prefix #when injecting continuation prompt #then promptAsync receives normalized agent", async () => {
+  test("#given inherited message agent has no ZWSP prefix #when injecting continuation prompt #then promptAsync receives registered display agent", async () => {
     // given
     let promptBody: { agent?: string } | undefined
     const ctx = {
@@ -136,7 +167,7 @@ describe("ralph-loop continuation prompt injector", () => {
     })
 
     // then
-    expect(promptBody?.agent).toBe("sisyphus")
+    expect(promptBody?.agent).toBe("Sisyphus - Ultraworker")
   })
 
   test("#given inherited message model includes variant #when injecting continuation prompt #then promptAsync receives variant as a top-level field", async () => {

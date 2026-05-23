@@ -5,6 +5,7 @@ import { BUILTIN_SERVERS } from "./constants"
 import type { ResolvedServer } from "./types"
 import { getOpenCodeConfigDir } from "../../shared"
 import { parseJsonc, detectConfigFile, detectPluginConfigFile } from "../../shared/jsonc-parser"
+import { CONFIG_BASENAME, LEGACY_CONFIG_BASENAME } from "../../shared/plugin-identity"
 
 interface LspEntry {
   disabled?: boolean
@@ -43,9 +44,13 @@ export function loadJsonFile<T>(path: string): T | null {
 export function getConfigPaths(): { project: string; user: string; opencode: string } {
   const cwd = process.cwd()
   const configDir = getOpenCodeConfigDir({ binary: "opencode" })
+  const pluginConfigDetectionOptions = {
+    basenames: [CONFIG_BASENAME],
+    legacyBasenames: [LEGACY_CONFIG_BASENAME],
+  } as const
   return {
-    project: detectPluginConfigFile(join(cwd, ".opencode")).path,
-    user: detectPluginConfigFile(configDir).path,
+    project: detectPluginConfigFile(join(cwd, ".opencode"), pluginConfigDetectionOptions).path,
+    user: detectPluginConfigFile(configDir, pluginConfigDetectionOptions).path,
     opencode: detectConfigFile(join(configDir, "opencode")).path,
   }
 }
