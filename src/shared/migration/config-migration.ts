@@ -6,6 +6,23 @@ import { migrateHookNames } from "./hook-names"
 import { migrateModelVersions } from "./model-versions"
 import { readAppliedMigrations, writeAppliedMigrations } from "./migrations-sidecar"
 
+function shouldRemoveObsoleteLspConfig(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return true
+  }
+
+  const lspConfig = value as Record<string, unknown>
+
+  // Preserve the current provider-based LSP config shape. Serena startup still
+  // depends on `pluginConfig.lsp`, so deleting this block during migration
+  // silently disables the lifecycle manager on next startup.
+  if ("provider" in lspConfig || "serena" in lspConfig) {
+    return false
+  }
+
+  return true
+}
+
 export function migrateConfigFile(
   configPath: string,
   rawConfig: Record<string, unknown>
@@ -105,15 +122,10 @@ export function migrateConfigFile(
     needsWrite = true
   }
 
-  // The legacy `lsp` config key was retired when LSP moved from native plugin
-  // tools to the `lsp` MCP server backed by `packages/lsp-tools-mcp`. The
-  // server now reads its server map from `.opencode/lsp.json` in the project
-  // root (path is hard-coded in `src/mcp/lsp.ts` via the
-  // `LSP_TOOLS_MCP_PROJECT_CONFIG` env var passed to the stdio MCP). The Zod
-  // schema strips unknown keys silently, so without this migration a stale
-  // `lsp` block lingers in the user's config file with no signal that it has
-  // stopped doing anything.
-  if (copy.lsp !== undefined) {
+  // Only remove the legacy custom-server map shape that was retired when LSP
+  // moved to the built-in `lsp` MCP. The current provider-based `lsp` config
+  // (including Serena settings) remains live and must survive migration.
+  if (copy.lsp !== undefined && shouldRemoveObsoleteLspConfig(copy.lsp)) {
     const droppedServers = copy.lsp && typeof copy.lsp === "object"
       ? Object.keys(copy.lsp as Record<string, unknown>)
       : []

@@ -223,6 +223,39 @@ describe("migrateConfigFile orphan lsp key", () => {
     expect(persistedConfig.lsp).toBeUndefined()
   })
 
+  test("preserves provider-based lsp config used by Serena startup", () => {
+    // given - the current provider-based lsp config shape
+    const workdir = createWorkdir()
+    const configPath = join(workdir, "oh-my-opencode.json")
+    const rawConfig: Record<string, unknown> = {
+      lsp: {
+        provider: "serena",
+        serena: {
+          projectRoot: "D:/workspace/project",
+          transport: "managed-http",
+          serenaCommand: ["uvx", "serena", "start-mcp-server"],
+        },
+      },
+    }
+    writeFileSync(configPath, JSON.stringify(rawConfig, null, 2) + "\n")
+
+    // when
+    const needsWrite = migrateConfigFile(configPath, rawConfig)
+
+    // then - no obsolete-lsp cleanup should run
+    expect(needsWrite).toBe(false)
+    expect(rawConfig.lsp).toEqual({
+      provider: "serena",
+      serena: {
+        projectRoot: "D:/workspace/project",
+        transport: "managed-http",
+        serenaCommand: ["uvx", "serena", "start-mcp-server"],
+      },
+    })
+    const persistedConfig = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>
+    expect(persistedConfig.lsp).toEqual(rawConfig.lsp)
+  })
+
   test("leaves the config alone when no 'lsp' key is present", () => {
     // given - a config that never had an lsp block
     const workdir = createWorkdir()
