@@ -91,6 +91,27 @@ function resolveConfigPathAfterLegacyMigration(detectedPath: string): string {
   return detectedPath
 }
 
+function resolvePluginConfigLayerPaths(configDir: string): string[] {
+  const detected = detectPluginConfigFile(configDir, {
+    basenames: [CONFIG_BASENAME],
+    legacyBasenames: [LEGACY_CONFIG_BASENAME],
+  })
+
+  if (detected.format === "none") {
+    return []
+  }
+
+  if (detected.legacyPath) {
+    log("Canonical plugin config detected alongside legacy config. Both files will be loaded, with canonical config taking precedence.", {
+      canonicalPath: detected.path,
+      legacyPath: detected.legacyPath,
+    })
+    return [detected.legacyPath, detected.path]
+  }
+
+  return [resolveConfigPathAfterLegacyMigration(detected.path)]
+}
+
 function loadExplicitGitMasterOverrides(configPath: string): Record<string, unknown> | undefined {
   try {
     if (!fs.existsSync(configPath)) {
@@ -302,23 +323,10 @@ export function loadPluginConfig(
 ): OhMyOpenCodeConfig {
   const userConfigDirs = [...getOpenCodeConfigDirs({ binary: "opencode" })].reverse()
   const userConfigLayers = userConfigDirs.map((configDir) => {
-    const detected = detectPluginConfigFile(configDir, {
-      basenames: [CONFIG_BASENAME],
-      legacyBasenames: [LEGACY_CONFIG_BASENAME],
-    })
-
-    if (detected.legacyPath) {
-      log("Canonical plugin config detected alongside legacy config. Remove the legacy file to avoid confusion.", {
-        canonicalPath: detected.path,
-        legacyPath: detected.legacyPath,
-      })
+    return {
+      configDir,
+      configPaths: resolvePluginConfigLayerPaths(configDir),
     }
-
-    const configPath = detected.format !== "none"
-      ? resolveConfigPathAfterLegacyMigration(detected.path)
-      : null
-
-    return { configDir, configPath }
   })
 
   // Pin the walk to $HOME only when the start directory is inside it. Outside
@@ -336,80 +344,69 @@ export function loadPluginConfig(
     stopDirectory,
   })
 
-  // Migrate any legacy basenames among ancestors and warn on dual-config presence
-  const canonicalAncestorPathsNearestFirst = ancestorConfigPathsNearestFirst.map(
-    (ancestorPath) => {
-      const opencodeDir = path.dirname(ancestorPath)
-      const ancestorDetected = detectPluginConfigFile(opencodeDir, {
-        basenames: [CONFIG_BASENAME],
-        legacyBasenames: [LEGACY_CONFIG_BASENAME],
-      })
-      if (ancestorDetected.legacyPath) {
-        log("Canonical plugin config detected alongside legacy config. Remove the legacy file to avoid confusion.", {
-          canonicalPath: ancestorDetected.path,
-          legacyPath: ancestorDetected.legacyPath,
-        })
-      }
-      return resolveConfigPathAfterLegacyMigration(ancestorPath)
-    },
-  )
+  const ancestorConfigLayersNearestFirst = ancestorConfigPathsNearestFirst.map((ancestorPath) => ({
+    configDir: path.dirname(ancestorPath),
+    configPaths: resolvePluginConfigLayerPaths(path.dirname(ancestorPath)),
+  }))
 
   let config: OhMyOpenCodeConfig = OhMyOpenCodeConfigSchema.parse({})
   let mergedUserGitMasterOverrides: Record<string, unknown> | null = null
 
   for (const userLayer of userConfigLayers) {
-    if (!userLayer.configPath) continue
+    for (const configPath of userLayer.configPaths) {
+      const userConfig = loadConfigFromPath(configPath, ctx)
+      const userGitMasterOverrides = loadExplicitGitMasterOverrides(configPath)
 
-    const userConfig = loadConfigFromPath(userLayer.configPath, ctx)
-    const userGitMasterOverrides = loadExplicitGitMasterOverrides(userLayer.configPath)
+      if (userConfig?.agent_definitions) {
+        userConfig.agent_definitions = resolveAgentDefinitionPaths(
+          userConfig.agent_definitions,
+          userLayer.configDir,
+          null,
+        )
+      }
 
-    if (userConfig?.agent_definitions) {
-      userConfig.agent_definitions = resolveAgentDefinitionPaths(
-        userConfig.agent_definitions,
-        userLayer.configDir,
-        null,
-      )
-    }
+      if (userConfig) {
+        config = mergeConfigs(config, userConfig)
+      }
 
-    if (userConfig) {
-      config = mergeConfigs(config, userConfig)
-    }
-
-    if (userGitMasterOverrides) {
-      mergedUserGitMasterOverrides = {
-        ...(mergedUserGitMasterOverrides ?? {}),
-        ...userGitMasterOverrides,
+      if (userGitMasterOverrides) {
+        mergedUserGitMasterOverrides = {
+          ...(mergedUserGitMasterOverrides ?? {}),
+          ...userGitMasterOverrides,
+        }
       }
     }
   }
 
   const userMcpEnvAllowlist = config.mcp_env_allowlist ?? []
 
-  const canonicalAncestorPathsFarthestFirst = [...canonicalAncestorPathsNearestFirst].reverse()
+  const ancestorConfigLayersFarthestFirst = [...ancestorConfigLayersNearestFirst].reverse()
   const defaultGitMaster = OhMyOpenCodeConfigSchema.parse({}).git_master
   const ancestorGitMasterOverridesFarthestFirst: Array<Record<string, unknown>> = []
 
-  for (const ancestorPath of canonicalAncestorPathsFarthestFirst) {
-    const ancestorConfig = loadConfigFromPath(ancestorPath, ctx)
-    const ancestorOverrides = loadExplicitGitMasterOverrides(ancestorPath)
+  for (const ancestorLayer of ancestorConfigLayersFarthestFirst) {
+    for (const ancestorPath of ancestorLayer.configPaths) {
+      const ancestorConfig = loadConfigFromPath(ancestorPath, ctx)
+      const ancestorOverrides = loadExplicitGitMasterOverrides(ancestorPath)
 
-    if (ancestorConfig?.agent_definitions) {
-      // Resolve relative paths against this ancestor's own .opencode/ base.
-      const ancestorBasePath = path.dirname(ancestorPath)
-      const ancestorDir = path.dirname(ancestorBasePath)
-      ancestorConfig.agent_definitions = resolveAgentDefinitionPaths(
-        ancestorConfig.agent_definitions,
-        ancestorBasePath,
-        ancestorDir,
-      )
-    }
+      if (ancestorConfig?.agent_definitions) {
+        // Resolve relative paths against this ancestor's own .opencode/ base.
+        const ancestorBasePath = path.dirname(ancestorPath)
+        const ancestorDir = path.dirname(ancestorBasePath)
+        ancestorConfig.agent_definitions = resolveAgentDefinitionPaths(
+          ancestorConfig.agent_definitions,
+          ancestorBasePath,
+          ancestorDir,
+        )
+      }
 
-    if (ancestorConfig) {
-      config = mergeConfigs(config, ancestorConfig)
-    }
+      if (ancestorConfig) {
+        config = mergeConfigs(config, ancestorConfig)
+      }
 
-    if (ancestorOverrides) {
-      ancestorGitMasterOverridesFarthestFirst.push(ancestorOverrides)
+      if (ancestorOverrides) {
+        ancestorGitMasterOverridesFarthestFirst.push(ancestorOverrides)
+      }
     }
   }
 

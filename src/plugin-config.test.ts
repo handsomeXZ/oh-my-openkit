@@ -576,6 +576,56 @@ describe("loadPluginConfig", () => {
     expect(reloadedConfig.agents?.oracle?.model).toBe("openai/gpt-5.5")
   })
 
+  it("merges legacy and canonical project configs when both coexist in the same .opencode directory", async () => {
+    // given
+    const rootDir = mkdtempSync(join(tmpdir(), "omo-plugin-config-coexist-"))
+    const userConfigDir = join(rootDir, "user-config")
+    const projectDir = join(rootDir, "project")
+    const projectConfigDir = join(projectDir, ".opencode")
+    const legacyConfigPath = join(projectConfigDir, "oh-my-opencode.jsonc")
+    const canonicalConfigPath = join(projectConfigDir, "oh-my-openagent.jsonc")
+
+    tempDirs.push(rootDir)
+    mkdirSync(userConfigDir, { recursive: true })
+    mkdirSync(projectConfigDir, { recursive: true })
+
+    writeFileSync(legacyConfigPath, JSON.stringify({
+      agents: { oracle: { model: "openai/gpt-5.4-mini" } },
+      lsp: {
+        provider: "serena",
+        serena: {
+          projectRoot: projectDir,
+          transport: "managed-http",
+          serenaCommand: ["uvx", "serena", "start-mcp-server"],
+        },
+      },
+    }))
+    writeFileSync(canonicalConfigPath, JSON.stringify({
+      agents: { oracle: { model: "openai/gpt-5.5" } },
+    }))
+
+    process.env.OPENCODE_CONFIG_DIR = userConfigDir
+
+    // when
+    const { loadPluginConfig } = await importFreshPluginConfigModule()
+    const config = loadPluginConfig(projectDir, {})
+
+    // then
+    expect(config.agents?.oracle?.model).toBe("openai/gpt-5.5")
+    expect(config.lsp).toEqual({
+      provider: "serena",
+      serena: {
+        projectRoot: projectDir,
+        transport: "managed-http",
+        wrapperCommand: undefined,
+        serenaCommand: ["uvx", "serena", "start-mcp-server"],
+        command: undefined,
+        env: undefined,
+        requiredTools: undefined,
+      },
+    })
+  })
+
   it("should still load config from legacy path when migration fails", async () => {
     // given - legacy config exists but canonical path is not writable
     const rootDir = mkdtempSync(join(tmpdir(), "omo-plugin-config-fail-"))
@@ -755,7 +805,7 @@ describe("loadPluginConfig", () => {
       expect(config.team_mode?.tmux_visualization).toBe(false)
     })
 
-    it("#given canonical user config lacks team_mode and legacy config only enables team_mode #when loadPluginConfig runs #then canonical config wins and tmux_visualization stays effectively false", async () => {
+    it("#given canonical user config lacks team_mode and legacy config only enables team_mode #when loadPluginConfig runs #then legacy team_mode is preserved with default tmux_visualization=false", async () => {
       // given
       const { userConfigDir, projectDir } = createLoadPluginConfigTestContext("omo-plugin-config-team-mode-legacy-")
 
@@ -775,11 +825,11 @@ describe("loadPluginConfig", () => {
       const config = loadPluginConfig(projectDir, {})
 
       // then
-      expect(config.team_mode).toBeUndefined()
-      expect(config.team_mode?.tmux_visualization ?? false).toBe(false)
+      expect(config.team_mode?.enabled).toBe(true)
+      expect(config.team_mode?.tmux_visualization).toBe(false)
     })
 
-    it("#given canonical user config lacks team_mode and legacy config sets tmux_visualization=true #when loadPluginConfig runs #then legacy team_mode is not promoted into the loaded config", async () => {
+    it("#given canonical user config lacks team_mode and legacy config sets tmux_visualization=true #when loadPluginConfig runs #then legacy team_mode is preserved", async () => {
       // given
       const { userConfigDir, projectDir } = createLoadPluginConfigTestContext("omo-plugin-config-team-mode-visualization-")
 
@@ -800,8 +850,10 @@ describe("loadPluginConfig", () => {
       const config = loadPluginConfig(projectDir, {})
 
       // then
-      // This proves a concurrent canonical file suppresses the legacy team_mode subtree entirely.
-      expect(config.team_mode).toBeUndefined()
+      expect(config.team_mode).toEqual(expect.objectContaining({
+        enabled: true,
+        tmux_visualization: true,
+      }))
     })
   })
 
@@ -1262,5 +1314,53 @@ describe("loadPluginConfig", () => {
     const hephaestus = config.agents?.hephaestus as { model?: string; fallback_models?: unknown }
     expect(hephaestus?.model).toBe("github-copilot/gpt-5.5")
     expect(hephaestus?.fallback_models).toEqual(["openai/gpt-5.5"])
+  })
+
+  it("preserves Serena lsp config during load instead of migrating it away", async () => {
+    const { userConfigDir, projectDir, projectConfigDir } =
+      createLoadPluginConfigTestContext("omo-plugin-config-serena-lsp-")
+
+    const configPath = join(projectConfigDir, "oh-my-openagent.jsonc")
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        lsp: {
+          provider: "serena",
+          serena: {
+            projectRoot: projectDir,
+            transport: "managed-http",
+            serenaCommand: ["uvx", "serena", "start-mcp-server"],
+          },
+        },
+      }),
+    )
+
+    process.env.OPENCODE_CONFIG_DIR = userConfigDir
+
+    const { loadPluginConfig } = await importFreshPluginConfigModule()
+    const config = loadPluginConfig(projectDir, {})
+
+    expect(config.lsp).toEqual({
+      provider: "serena",
+      serena: {
+        projectRoot: projectDir,
+        transport: "managed-http",
+        wrapperCommand: undefined,
+        serenaCommand: ["uvx", "serena", "start-mcp-server"],
+        command: undefined,
+        env: undefined,
+        requiredTools: undefined,
+      },
+    })
+
+    const persistedConfig = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>
+    expect(persistedConfig.lsp).toEqual({
+      provider: "serena",
+      serena: {
+        projectRoot: projectDir,
+        transport: "managed-http",
+        serenaCommand: ["uvx", "serena", "start-mcp-server"],
+      },
+    })
   })
 })
